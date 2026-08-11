@@ -3361,25 +3361,50 @@ document.addEventListener("DOMContentLoaded", () => {
   },true);
 
   // Photos du calendrier : on remplace les résultats ambigus par l'identité musicale exacte.
+  let calendarPhotoTimer = null;
+  let calendarPhotoRun = 0;
   async function refreshCalendarPhotos(){
+    const run = ++calendarPhotoRun;
     const grid=document.getElementById('grid'); if(!grid)return;
-    for(const cell of Array.from(grid.querySelectorAll('.day[data-date]'))){
+    const cells = Array.from(grid.querySelectorAll('.day[data-date]'));
+    const jobs = [];
+    const seen = new Set();
+    for(const cell of cells){
       const item=itemForDate(cell.dataset.date); if(!item)continue;
-      const author=item.author||item.auteur||'';
-      const url=await artistImage(author); if(!url)continue;
-      cell.querySelectorAll('.calendar-artist-photo').forEach(x=>x.remove());
-      cell.classList.add('has-artist-photo');
-      const img=document.createElement('img');
-      img.className='calendar-artist-photo'; img.loading='lazy'; img.decoding='async'; img.alt='Photo de '+author; img.src=url;
-      img.onerror=()=>{img.remove();};
-      const shade=cell.querySelector('.calendar-photo-shade');
-      if(shade) cell.insertBefore(img,shade); else cell.prepend(img);
+      const author=(item.author||item.auteur||'').trim();
+      if(!author)continue;
+      const key=author.toLowerCase();
+      if(seen.has(key))continue;
+      seen.add(key);
+      jobs.push({author, cells:cells.filter(c=>{ const it=itemForDate(c.dataset.date); return ((it?.author||it?.auteur||'').trim().toLowerCase()===key); })});
     }
+    // Ne bloque jamais l'affichage du calendrier : les photos sont chargées après le rendu.
+    const concurrency = 6;
+    let next = 0;
+    async function worker(){
+      while(next < jobs.length){
+        const job = jobs[next++];
+        const url = await artistImage(job.author).catch(()=>"");
+        if(run !== calendarPhotoRun || !url) continue;
+        for(const cell of job.cells){
+          if(!document.body.contains(cell)) continue;
+          if(cell.querySelector('.calendar-artist-photo')) continue;
+          cell.classList.add('has-artist-photo');
+          const img=document.createElement('img');
+          img.className='calendar-artist-photo'; img.loading='lazy'; img.decoding='async'; img.alt='Photo de '+job.author; img.src=url;
+          img.onerror=()=>{img.remove(); cell.classList.remove('has-artist-photo');};
+          const shade=cell.querySelector('.calendar-photo-shade');
+          if(shade) cell.insertBefore(img,shade); else cell.prepend(img);
+        }
+      }
+    }
+    await Promise.all(Array.from({length:Math.min(concurrency,jobs.length)},()=>worker()));
   }
   const oldRC=window.renderCalendar;
   window.renderCalendar=function(){
     if(typeof oldRC==='function') oldRC.apply(this,arguments);
-    setTimeout(refreshCalendarPhotos,50); setTimeout(refreshCalendarPhotos,500);
+    if(calendarPhotoTimer) clearTimeout(calendarPhotoTimer);
+    calendarPhotoTimer=setTimeout(()=>{ calendarPhotoTimer=null; refreshCalendarPhotos(); },180);
   };
 
   // Retour calendrier : réaffiche le calendrier sans réutiliser l'ancien routeur.
@@ -3435,7 +3460,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener('hashchange',()=>setTimeout(paint,30));
   const old=window.__refreshFlag;
   window.__refreshFlag=function(origin){ if(typeof old==='function') { try{old(origin);}catch(e){} } setTimeout(paint,0); };
-  setInterval(paint,800);
+  // Pas de polling permanent : le drapeau est rafraîchi uniquement lors des changements de fiche.
 })();
 </script>
 
@@ -3543,3 +3568,79 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener('DOMContentLoaded',()=>setTimeout(sync,50));
 })();
 </script>
+
+<!-- === FINAL: fiche utilise EXACTEMENT la photo du calendrier === -->
+<style>
+  #authorImg{cursor:zoom-in;}
+</style>
+<script>
+(function(){
+  function norm(v){
+    return String(v||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  }
+  function findCalendarPhoto(author){
+    const target=norm(author);
+    if(!target) return '';
+    const imgs=Array.from(document.querySelectorAll('#grid img.calendar-artist-photo'));
+    // 1) correspondance exacte sur l'alt fourni par le calendrier
+    for(const img of imgs){
+      const alt=norm((img.getAttribute('alt')||'').replace(/^photo de\s*/i,''));
+      if(alt===target && img.currentSrc) return img.currentSrc;
+    }
+    // 2) correspondance sur la cellule contenant le nom de l'artiste
+    for(const img of imgs){
+      const cell=img.closest('.day');
+      if(!cell) continue;
+      const text=norm(cell.textContent);
+      if(text.includes(target) && img.currentSrc) return img.currentSrc;
+    }
+    return '';
+  }
+  function getFallback(author){
+    const k=norm(author);
+    if(!k) return '';
+    try{const x=localStorage.getItem('UNIFIED_ARTIST_IMG_V2_'+k);if(x)return JSON.parse(x)?.url||'';}catch(e){}
+    try{const x=localStorage.getItem('AUTHOR_IMG_'+k);if(x)return JSON.parse(x)?.url||'';}catch(e){}
+    try{const x=localStorage.getItem('CALENDAR_ARTIST_IMG_V1_'+k);if(x)return JSON.parse(x)?.url||'';}catch(e){}
+    return '';
+  }
+  function syncExact(){
+    const img=document.getElementById('authorImg');
+    if(!img) return;
+    const author=(document.getElementById('auteur')?.textContent||'').trim();
+    if(!author || author==='—') return;
+    const exact=findCalendarPhoto(author);
+    const url=exact || getFallback(author);
+    if(url){
+      img.src=url;
+      img.style.display='';
+      img.alt='Photo de '+author;
+      img.dataset.source='calendar-exact';
+    }
+  }
+  window.__syncExactCalendarArtistPhoto=syncExact;
+  const oldRender=window.renderDetail;
+  if(typeof oldRender==='function'){
+    window.renderDetail=function(){
+      const r=oldRender.apply(this,arguments);
+      // Le calendrier est la source de vérité pour la photo.
+      setTimeout(syncExact,0);
+      setTimeout(syncExact,120);
+      setTimeout(syncExact,500);
+      return r;
+    };
+  }
+  document.addEventListener('DOMContentLoaded',()=>{
+    syncExact();
+    setTimeout(syncExact,200);
+    setTimeout(syncExact,700);
+  });
+  // Si la photo du calendrier arrive après l'ouverture de la fiche, on resynchronise.
+  const grid=document.getElementById('grid');
+  if(grid){
+    const obs=new MutationObserver(()=>syncExact());
+    obs.observe(grid,{childList:true,subtree:true,attributes:true,attributeFilter:['src']});
+  }
+})();
+</script>
+
