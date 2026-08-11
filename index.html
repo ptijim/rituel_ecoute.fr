@@ -2220,7 +2220,9 @@ document.addEventListener("DOMContentLoaded", function(){
 <style>
 /* Lightbox overlay */
 #imgLightbox{ position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; z-index:99999; }
-#imgLightbox img{ max-width:92vw; max-height:92vh; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+#imgLightbox img{ max-width:92vw; max-height:92vh; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.5); object-fit:contain; }
+#imgLightbox img.zoom-flag{ width:50vw; max-width:50vw; height:auto; max-height:70vh; object-fit:contain; }
+@media (max-width:700px){ #imgLightbox img.zoom-flag{ width:82vw; max-width:82vw; max-height:55vh; } }
 #imgLightbox .close{ position:absolute; top:16px; right:16px; font-size:28px; color:#fff; cursor:pointer; }
 </style>
 <div id="imgLightbox" role="dialog" aria-modal="true" aria-label="Agrandissement image">
@@ -2262,29 +2264,56 @@ document.addEventListener("DOMContentLoaded", function(){
   // Lightbox pour l'image auteur
   function setupAuthorImageZoom(){
     const img = document.getElementById("authorImg");
+    const flag = document.getElementById("flagIcon");
     const box = document.getElementById("imgLightbox");
     const big = document.getElementById("imgLightboxImg");
     const close = box ? box.querySelector(".close") : null;
-    if(!img || !box || !big) return;
+    if(!box || !big) return;
 
-    function open(){
-      const src = img.getAttribute("src") || "";
-      const hi = getFullImageFromThumb(src);
-      big.setAttribute("src", hi || src);
-      box.style.display = "flex";
+    // Évite de réinstaller plusieurs fois les mêmes gestionnaires lors des changements de fiche.
+    if(box.dataset.zoomBound !== "1"){
+      box.dataset.zoomBound = "1";
+      function closeBox(){
+        box.style.display = "none";
+        big.setAttribute("src","");
+      }
+      if(close) close.addEventListener("click", closeBox);
+      box.addEventListener("click", function(ev){
+        if(ev.target===box) closeBox();
+      });
+      document.addEventListener("keydown", function(ev){
+        if(ev.key==="Escape") closeBox();
+      });
     }
-    function closeBox(){
-      box.style.display = "none";
-      big.setAttribute("src","");
+
+    function bind(target, kind){
+      if(!target || target.dataset.zoomBound === "1") return;
+      target.dataset.zoomBound = "1";
+      target.style.cursor = "zoom-in";
+      target.title = kind === "flag" ? "Cliquer pour agrandir le drapeau" : "Cliquer pour agrandir la photo";
+      target.addEventListener("click", function(){
+        const src = target.getAttribute("src") || "";
+        if(!src) return;
+        const hi = getFullImageFromThumb(src);
+        big.setAttribute("src", hi || src);
+        big.classList.toggle("zoom-flag", kind === "flag");
+        big.alt = target.alt || (kind === "flag" ? "Drapeau" : "Photo de l'artiste");
+        box.style.display = "flex";
+      });
     }
-    img.addEventListener("click", open);
-    if(close) close.addEventListener("click", closeBox);
-    box.addEventListener("click", function(ev){
-      if(ev.target===box) closeBox();
-    });
-    document.addEventListener("keydown", function(ev){
-      if(ev.key==="Escape") closeBox();
-    });
+
+    bind(img, "photo");
+    // Le drapeau est généré dynamiquement : on cible aussi l'image qu'il contient.
+    const flagImg = flag ? flag.querySelector("img") : null;
+    bind(flagImg, "flag");
+  }
+
+  function observeFlagForZoom(){
+    const flag = document.getElementById("flagIcon");
+    if(!flag || flag.dataset.zoomObserver === "1") return;
+    flag.dataset.zoomObserver = "1";
+    const obs = new MutationObserver(function(){ setupAuthorImageZoom(); });
+    obs.observe(flag, {childList:true, subtree:true});
   }
 
   // Surcouche finale de renderDetail : ajoute liens Wikipedia aux instruments
@@ -2300,7 +2329,7 @@ document.addEventListener("DOMContentLoaded", function(){
         }
       }catch(e){}
       // S'assurer que le zoom est câblé (au cas où le DOM a été rerendu)
-      try{ setupAuthorImageZoom(); }catch(e){}
+      try{ setupAuthorImageZoom(); observeFlagForZoom(); }catch(e){}
     };
   })();
 
@@ -2308,6 +2337,7 @@ document.addEventListener("DOMContentLoaded", function(){
   document.addEventListener("DOMContentLoaded", function(){
     if(window.__modernInit) return; window.__modernInit = true;
     setupAuthorImageZoom();
+    observeFlagForZoom();
     const h = location.hash || "#/";
     if(h.startsWith("#/date=")){
       // forcer un post-traitement si déjà sur une fiche
@@ -3397,7 +3427,7 @@ document.addEventListener("DOMContentLoaded", () => {
       img.dataset.fallback='1';
       img.src='https://cdn.jsdelivr.net/gh/lipis/flag-icons/flags/4x3/'+code+'.svg';
     };
-    img.src='https://flagcdn.com/w80/'+code+'.png';
+    img.src='https://flagcdn.com/w320/'+code+'.png';
     el.appendChild(img);
   }
   window.__paintFinalFlag=paint;
@@ -3408,6 +3438,73 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(paint,800);
 })();
 </script>
+
+<!-- === ROBUST IMAGE ZOOM v9 === -->
+<style>
+#artistImageZoomOverlay{
+  position:fixed!important; inset:0!important; z-index:2147483647!important;
+  display:none; align-items:center; justify-content:center;
+  padding:24px; box-sizing:border-box;
+  background:rgba(0,0,0,.88);
+  cursor:zoom-out;
+}
+#artistImageZoomOverlay.open{display:flex!important}
+#artistImageZoomOverlay img{
+  display:block!important; max-width:90vw!important; max-height:82vh!important;
+  width:85vw!important; height:auto!important; object-fit:contain!important;
+  border-radius:10px; background:#fff;
+  box-shadow:0 12px 50px rgba(0,0,0,.55);
+  cursor:zoom-out;
+}
+#artistImageZoomOverlay .zoom-close{
+  position:absolute; top:14px; right:18px; width:44px; height:44px;
+  border:0; border-radius:50%; background:rgba(255,255,255,.18);
+  color:#fff; font-size:30px; line-height:44px; text-align:center;
+  cursor:pointer;
+}
+#authorImg, #flagIcon img{cursor:zoom-in!important}
+#artistImageZoomOverlay img.flag-zoom{width:85vw!important;max-width:85vw!important;max-height:72vh!important;height:auto!important;object-fit:contain!important}
+</style>
+<script>
+(function(){
+  function ensureOverlay(){
+    let o=document.getElementById('artistImageZoomOverlay');
+    if(o) return o;
+    o=document.createElement('div');
+    o.id='artistImageZoomOverlay';
+    o.setAttribute('role','dialog');
+    o.setAttribute('aria-modal','true');
+    o.setAttribute('aria-label','Image agrandie');
+    o.innerHTML='<button type="button" class="zoom-close" aria-label="Fermer">×</button><img alt="Image agrandie">';
+    document.body.appendChild(o);
+    const close=()=>{o.classList.remove('open'); o.querySelector('img').removeAttribute('src');};
+    o.querySelector('.zoom-close').addEventListener('click',e=>{e.stopPropagation();close();});
+    o.addEventListener('click',e=>{if(e.target===o || e.target===o.querySelector('img')) close();});
+    document.addEventListener('keydown',e=>{if(e.key==='Escape') close();});
+    return o;
+  }
+  function openZoom(img){
+    if(!img) return;
+    const src=img.currentSrc || img.src || img.getAttribute('src');
+    if(!src) return;
+    const o=ensureOverlay(), big=o.querySelector('img');
+    big.src=src;
+    big.classList.toggle('flag-zoom', !!(img.closest && img.closest('#flagIcon')));
+    big.alt=img.alt || 'Image agrandie';
+    o.classList.add('open');
+  }
+  document.addEventListener('click',function(e){
+    const target=e.target && e.target.nodeType===1 ? e.target : e.target?.parentElement;
+    if(!target) return;
+    const img=target.closest && target.closest('#authorImg, #flagIcon img');
+    if(!img) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openZoom(img);
+  },true);
+})();
+</script>
+
 </body>
 </html>
 
