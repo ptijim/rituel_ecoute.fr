@@ -468,11 +468,6 @@ label[for="file"], button[for="file"] { display:none !important; }
         <div class="text-xs text-slate-500">Astuce : mets un lien <code>youtube.com/watch?v=…</code> ou <code>youtu.be/…</code>.</div>
       </div>
 
-      <div class="mt-2">
-        <div class="text-slate-500 text-sm">Lien YouTube</div>
-        <div id="ytWrap" class="mt-1"></div>
-      </div>
-    
       <div class="mt-4 grid md:grid-cols-2 gap-4">
         <div>
           <div class="text-slate-500 text-sm">YouTube (intégré)</div>
@@ -2650,31 +2645,77 @@ document.addEventListener("DOMContentLoaded", () => {
     const json = await res.json();
     return json?.query?.search?.[0]?.title || "";
   }
+  // Résolution rapide et unifiée des photos : le calendrier et la fiche
+  // utilisent exactement la même URL pour un artiste donné.
+  const KNOWN_ARTIST_PHOTOS = {
+    "pomme": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pomme%20Bourges%20Autoharpe.jpg",
+    "indochine": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Indochine%202009.JPG",
+    "téléphone": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Festival%20des%20Vieilles%20Charrues%202016%20-%20Les%20Insus%20-%20039.jpg",
+    "telephone": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Festival%20des%20Vieilles%20Charrues%202016%20-%20Les%20Insus%20-%20039.jpg",
+    "clou": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Clou%20Cigale%2018-11-2021.jpg",
+    "hervé": "https://commons.wikimedia.org/wiki/Special:Redirect/file/P2N2023Herve_1.jpg",
+    "herve": "https://commons.wikimedia.org/wiki/Special:Redirect/file/P2N2023Herve_1.jpg"
+  };
+  const artistPhotoCacheKey = (author) => "UNIFIED_ARTIST_IMG_V2_" + normalizeKey(author);
+  function readUnifiedPhoto(author){
+    const key = normalizeKey(author);
+    if(!key) return "";
+    const known = KNOWN_ARTIST_PHOTOS[key];
+    if(known) return known;
+    try{
+      const a = localStorage.getItem(artistPhotoCacheKey(author));
+      if(a) return JSON.parse(a)?.url || "";
+    }catch(e){}
+    // Réutilise immédiatement la photo déjà trouvée par la fiche.
+    try{
+      const a = localStorage.getItem("AUTHOR_IMG_" + key);
+      if(a) return JSON.parse(a)?.url || "";
+    }catch(e){}
+    return "";
+  }
+  function writeUnifiedPhoto(author, url){
+    if(!author || !url) return;
+    try{ localStorage.setItem(artistPhotoCacheKey(author), JSON.stringify({url})); }catch(e){}
+    try{ localStorage.setItem("AUTHOR_IMG_" + normalizeKey(author), JSON.stringify({url, credit:"Source : Wikipedia/Wikimedia Commons"})); }catch(e){}
+  }
   async function findArtistPhoto(item){
-    const author = item.author || item.auteur || "";
-    const title = item.title || item.titre || "";
-    const explicit = item.photo || item.image || item.Photo || "";
-    if(/^https?:\/\//i.test(explicit)) return explicit;
+    const author = String(item.author || item.auteur || "").trim();
+    const title = String(item.title || item.titre || "").trim();
+    const explicit = String(item.photo || item.image || item.Photo || "").trim();
+    if(/^https?:\/\//i.test(explicit)){ writeUnifiedPhoto(author, explicit); return explicit; }
     const key = normalizeKey(author || title);
     if(!key) return "";
+
+    const unified = readUnifiedPhoto(author);
+    if(unified) return unified;
+
     const cached = cacheGet(key);
-    if(cached && cached.url) return cached.url;
+    if(cached && cached.url){ writeUnifiedPhoto(author, cached.url); return cached.url; }
     if(cached && cached.miss) return "";
     if(photoJobs.has(key)) return photoJobs.get(key);
+
     const job = (async()=>{
-      const queries = [author, `${author} ${title}`, title].map(s => String(s || "").trim()).filter(Boolean);
-      for(const lang of ["fr","en","it","de","es"]){
-        for(const query of queries){
-          try{ const direct = await fetchSummaryImage(lang, query); if(direct){ cacheSet(key, {url:direct}); return direct; } }catch(e){}
+      // Une seule recherche ciblée plutôt que plusieurs langues × plusieurs requêtes.
+      // Cela accélère fortement le premier affichage du calendrier.
+      const queries = [
+        author ? `${author} chanteur` : title,
+        author ? `${author} musicien` : title,
+        author ? `${author} groupe musical` : title
+      ].filter(Boolean);
+      try{
+        const searchResults = await Promise.all(queries.map(q => fetchSearchTitle("fr", q).catch(()=>"")));
+        for(const foundTitle of searchResults){
+          if(!foundTitle) continue;
+          const img = await fetchSummaryImage("fr", foundTitle).catch(()=>"");
+          if(img){ cacheSet(key, {url:img}); writeUnifiedPhoto(author, img); return img; }
         }
-        for(const query of queries){
-          try{
-            const foundTitle = await fetchSearchTitle(lang, query);
-            const found = foundTitle ? await fetchSummaryImage(lang, foundTitle) : "";
-            if(found){ cacheSet(key, {url:found}); return found; }
-          }catch(e){}
+        // Dernier recours : une recherche anglaise, une seule.
+        const foundEn = await fetchSearchTitle("en", `${author} musician`).catch(()=>"");
+        if(foundEn){
+          const img = await fetchSummaryImage("en", foundEn).catch(()=>"");
+          if(img){ cacheSet(key, {url:img}); writeUnifiedPhoto(author, img); return img; }
         }
-      }
+      }catch(e){}
       cacheSet(key, {miss:true});
       return "";
     })();
@@ -2726,10 +2767,8 @@ document.addEventListener("DOMContentLoaded", () => {
   window.renderCalendar = function(){
     if(typeof previousRenderCalendar === "function") previousRenderCalendar.apply(this, arguments);
     enhanceCalendarPhotos();
-    setTimeout(enhanceCalendarPhotos, 200);
-    setTimeout(enhanceCalendarPhotos, 900);
   };
-  document.addEventListener("DOMContentLoaded", function(){ enhanceCalendarPhotos(); setTimeout(enhanceCalendarPhotos, 500); });
+  document.addEventListener("DOMContentLoaded", function(){ enhanceCalendarPhotos(); });
   window.addEventListener("hashchange", function(){ setTimeout(enhanceCalendarPhotos, 80); }, true);
 })();
 </script>
@@ -3087,8 +3126,6 @@ document.addEventListener("DOMContentLoaded", () => {
   window.renderCalendar = function(){
     if(typeof previousRenderCalendar === "function") previousRenderCalendar.apply(this, arguments);
     rerunEnhancers();
-    setTimeout(rerunEnhancers, 120);
-    setTimeout(rerunEnhancers, 700);
   };
   document.addEventListener("DOMContentLoaded", function(){
     if(moveToUsefulMonth() && typeof window.renderCalendar === "function"){
@@ -3096,8 +3133,6 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     rerunEnhancers();
-    setTimeout(rerunEnhancers, 250);
-    setTimeout(rerunEnhancers, 900);
   });
   window.addEventListener("hashchange", function(){ setTimeout(rerunEnhancers, 80); }, true);
 })();
@@ -3188,7 +3223,22 @@ document.addEventListener("DOMContentLoaded", () => {
   async function artistImage(author){
     const fixed=fixedArtist(author);
     if(fixed) return fixed.image;
-    return await wikidataImage(author);
+    const k=keyFor(author);
+    try{
+      const u=localStorage.getItem('UNIFIED_ARTIST_IMG_V2_'+k);
+      if(u){ const j=JSON.parse(u); if(j?.url) return j.url; }
+    }catch(e){}
+    try{
+      const u=localStorage.getItem('CALENDAR_ARTIST_IMG_V1_'+k);
+      if(u){ const j=JSON.parse(u); if(j?.url) return j.url; }
+    }catch(e){}
+    try{
+      const u=localStorage.getItem('AUTHOR_IMG_'+k);
+      if(u){ const j=JSON.parse(u); if(j?.url) return j.url; }
+    }catch(e){}
+    const url=await wikidataImage(author);
+    if(url){ try{ localStorage.setItem('UNIFIED_ARTIST_IMG_V2_'+k, JSON.stringify({url})); }catch(e){} }
+    return url;
   }
 
   function setAuthorWiki(author){
@@ -3360,3 +3410,39 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
+<!-- === UNIFIED ARTIST PHOTO: fiche = calendrier === -->
+<script>
+(function(){
+  function norm(v){return String(v||'').trim().toLowerCase();}
+  const known={
+    "pomme":"https://commons.wikimedia.org/wiki/Special:Redirect/file/Pomme%20Bourges%20Autoharpe.jpg",
+    "indochine":"https://commons.wikimedia.org/wiki/Special:Redirect/file/Indochine%202009.JPG",
+    "téléphone":"https://commons.wikimedia.org/wiki/Special:Redirect/file/Festival%20des%20Vieilles%20Charrues%202016%20-%20Les%20Insus%20-%20039.jpg",
+    "telephone":"https://commons.wikimedia.org/wiki/Special:Redirect/file/Festival%20des%20Vieilles%20Charrues%202016%20-%20Les%20Insus%20-%20039.jpg",
+    "clou":"https://commons.wikimedia.org/wiki/Special:Redirect/file/Clou%20Cigale%2018-11-2021.jpg",
+    "hervé":"https://commons.wikimedia.org/wiki/Special:Redirect/file/P2N2023Herve_1.jpg",
+    "herve":"https://commons.wikimedia.org/wiki/Special:Redirect/file/P2N2023Herve_1.jpg"
+  };
+  function get(author){
+    const k=norm(author); if(!k)return '';
+    if(known[k])return known[k];
+    try{const x=localStorage.getItem('UNIFIED_ARTIST_IMG_V2_'+k);if(x)return JSON.parse(x)?.url||'';}catch(e){}
+    try{const x=localStorage.getItem('AUTHOR_IMG_'+k);if(x)return JSON.parse(x)?.url||'';}catch(e){}
+    try{const x=localStorage.getItem('CALENDAR_ARTIST_IMG_V1_'+k);if(x)return JSON.parse(x)?.url||'';}catch(e){}
+    return '';
+  }
+  function sync(){
+    const img=document.getElementById('authorImg');
+    const author=(document.getElementById('auteur')?.textContent||'').trim();
+    const url=get(author);
+    if(img && url){ img.src=url; img.style.display=''; img.alt='Photo de '+author; }
+  }
+  window.__syncUnifiedArtistPhoto=sync;
+  const old=window.renderDetail;
+  if(typeof old==='function'){
+    window.renderDetail=function(){const r=old.apply(this,arguments); setTimeout(sync,0); return r;};
+  }
+  document.addEventListener('DOMContentLoaded',()=>setTimeout(sync,50));
+})();
+</script>
