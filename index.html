@@ -1500,138 +1500,44 @@ parseHash();
 
 
 <script>
-// === Flags & fun hooks ===
+// === Flags: affichage robuste des drapeaux ===
 (function(){
-  // Basic mapping from common country names (FR) to ISO codes
   const COUNTRY_MAP = {
-    "france":"FR","république française":"FR",
-    "espagne":"ES","royaume d'espagne":"ES",
-    "italie":"IT",
-    "allemagne":"DE","germany":"DE","république fédérale d'allemagne":"DE",
-    "autriche":"AT",
-    "royaume-uni":"GB","royaume uni":"GB","angleterre":"GB","royaume-uni de grande-bretagne et d'irlande du nord":"GB","uk":"GB","gb":"GB","grande-bretagne":"GB","écosse":"GB","irlande du nord":"GB","pays de galles":"GB",
-    "irlande":"IE",
-    "pologne":"PL",
-    "hongrie":"HU",
-    "république tchèque":"CZ","tchéquie":"CZ",
-    "slovaquie":"SK",
-    "russie":"RU","fédération de russie":"RU",
-    "ukraine":"UA",
-    "finlande":"FI",
-    "norvège":"NO",
-    "suède":"SE",
-    "danemark":"DK",
-    "pays-bas":"NL","hollande":"NL",
-    "belgique":"BE",
-    "suisse":"CH",
-    "portugal":"PT",
-    "grèce":"GR",
-    "turquie":"TR",
-    "états-unis":"US","etats-unis":"US","usa":"US","états unis":"US","united states":"US","amérique":"US",
-    "canada":"CA",
-    "mexique":"MX",
-    "brésil":"BR",
-    "argentine":"AR",
-    "chili":"CL",
-    "pérou":"PE",
-    "chine":"CN",
-    "japon":"JP",
-    "corée du sud":"KR","corée":"KR","korea":"KR",
-    "inde":"IN",
-    "indonésie":"ID",
-    "australie":"AU",
-    "nouvelle-zélande":"NZ",
-    "islande":"IS",
-    "roumanie":"RO",
-    "bulgarie":"BG",
-    "serbie":"RS",
-    "croatie":"HR",
-    "slovénie":"SI",
-    "lituanie":"LT",
-    "lettonie":"LV",
-    "estonie":"EE",
-    "luxembourg":"LU",
-    "malte":"MT",
-    "chypre":"CY",
-    "arménie":"AM",
-    "géorgie":"GE",
-    "israël":"IL","israel":"IL",
-    "égypt":"EG","egypte":"EG","égypte":"EG",
-    "maroc":"MA",
-    "tunisie":"TN",
-    "algérie":"DZ",
-    "cuba":"CU",
-    "cap-vert":"CV","cap vert":"CV","cape verde":"CV",
-    "bosnie et herzégovine":"BA","bosnie-herzégovine":"BA","bosnie":"BA",
-    "cameroun":"CM",
-    "jamaïque":"JM","jamaique":"JM",
-    "mali":"ML",
-    "hawaï":"US","hawai":"US","hawaï, états-unis":"US"
+    "france":"FR","espagne":"ES","italie":"IT","allemagne":"DE","autriche":"AT","royaume-uni":"GB","royaume uni":"GB","angleterre":"GB","uk":"GB","grande-bretagne":"GB","irlande":"IE","pologne":"PL","hongrie":"HU","république tchèque":"CZ","tchéquie":"CZ","slovaquie":"SK","russie":"RU","ukraine":"UA","finlande":"FI","norvège":"NO","suède":"SE","danemark":"DK","pays-bas":"NL","hollande":"NL","belgique":"BE","suisse":"CH","portugal":"PT","grèce":"GR","turquie":"TR","états-unis":"US","etats-unis":"US","états unis":"US","usa":"US","canada":"CA","mexique":"MX","brésil":"BR","argentine":"AR","chili":"CL","pérou":"PE","bolivie":"BO","colombie":"CO","équateur":"EC","paraguay":"PY","uruguay":"UY","chine":"CN","japon":"JP","corée du sud":"KR","corée":"KR","inde":"IN","indonésie":"ID","australie":"AU","nouvelle-zélande":"NZ","islande":"IS","roumanie":"RO","bulgarie":"BG","serbie":"RS","croatie":"HR","slovénie":"SI","lituanie":"LT","lettonie":"LV","estonie":"EE","luxembourg":"LU","malte":"MT","chypre":"CY","arménie":"AM","géorgie":"GE","israël":"IL","israel":"IL","égypte":"EG","egypte":"EG","maroc":"MA","tunisie":"TN","algérie":"DZ","cuba":"CU","cap-vert":"CV","cap vert":"CV","bosnie":"BA","bosnie-herzégovine":"BA","cameroun":"CM","nigeria":"NG","nigéria":"NG","ghana":"GH","sénégal":"SN","mali":"ML","guinée":"GN","guinée-bissau":"GW","côte d'ivoire":"CI","cote d ivoire":"CI","afrique du sud":"ZA","namibie":"NA","kenya":"KE","tanzanie":"TZ","ouganda":"UG","rwanda":"RW","république démocratique du congo":"CD","rd congo":"CD","congo":"CG","mozambique":"MZ","zimbabwe":"ZW","zambie":"ZM","angola":"AO","éthiopie":"ET","madagascar":"MG","maurice":"MU","jamaïque":"JM","haïti":"HT","honduras":"HN","nicaragua":"NI","guatemala":"GT","costa rica":"CR","panama":"PA","république dominicaine":"DO","portorico":"PR","portorico":"PR","iran":"IR","irak":"IQ","liban":"LB","syrie":"SY","jordanie":"JO","arabie saoudite":"SA","émirats arabes unis":"AE","israël":"IL","palestine":"PS","mongolie":"MN","vietnam":"VN","thaïlande":"TH","philippines":"PH","malaisie":"MY","singapour":"SG","népal":"NP","pakistan":"PK","bangladesh":"BD","sri lanka":"LK","afghanistan":"AF","kazakhstan":"KZ","ouzbékistan":"UZ","azerbaïdjan":"AZ","australie":"AU","papouasie-nouvelle-guinée":"PG","fidji":"FJ","hawaï":"US","hawai":"US"
   };
-
-  function toFlagEmoji(countryCode){
-    if(!countryCode || countryCode.length!==2) return "";
-    const A = 0x1F1E6; // Regional Indicator Symbol Letter A
-    const code = countryCode.toUpperCase();
-    const first = code.charCodeAt(0) - 65 + A;
-    const second = code.charCodeAt(1) - 65 + A;
-    return String.fromCodePoint(first) + String.fromCodePoint(second);
-  }
-
+  function clean(v){ return String(v||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[’']/g," ").replace(/[-_,;()]/g,' ').replace(/\s+/g,' ').trim(); }
+  const MAP = new Map(Object.entries(COUNTRY_MAP).map(([k,v])=>[clean(k),v]));
   function extractCountryCode(origin){
-    if(!origin) return "";
-    const clean = (value)=> String(value||"")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/\p{Diacritic}+/gu,"")
-      .replace(/[’']/g," ")
-      .replace(/[-_,;()]/g," ")
-      .replace(/\s+/g," ")
-      .trim();
-    const s = clean(origin);
-    const normalizedMap = new Map(Object.entries(COUNTRY_MAP).map(([name, code]) => [clean(name), code]));
-    if(normalizedMap.has(s)) return normalizedMap.get(s);
-    for(const [name, code] of normalizedMap.entries()){
-      if(name && s.includes(name)) return code;
-    }
-    return "";
+    const s=clean(origin);
+    if(!s || s==='—') return '';
+    if(/^[a-z]{2}$/.test(s)) return s.toUpperCase();
+    if(MAP.has(s)) return MAP.get(s);
+    // Cherche le nom du pays dans une chaîne plus longue.
+    for(const [name,code] of MAP){ if(name && (s===name || s.includes(name))) return code; }
+    return '';
   }
-
   function refreshFlag(origin){
-    const el = document.getElementById("flagIcon");
-    if(!el) return;
-    const code = extractCountryCode(origin||"");
-    el.textContent = code ? toFlagEmoji(code) : "🏳️";
-    el.title = code || "";
+    const el=document.getElementById('flagIcon'); if(!el) return;
+    const code=extractCountryCode(origin);
+    el.innerHTML='';
+    if(!code){ el.textContent='🏳️'; el.title='Pays non reconnu'; return; }
+    // Image réelle : évite les drapeaux monochromes/blancs selon la police du système.
+    const img=document.createElement('img');
+    img.src='https://flagcdn.com/w40/'+code.toLowerCase()+'.png';
+    img.alt=code; img.title=code;
+    img.width=40; img.height=27;
+    img.style.cssText='width:40px;height:27px;object-fit:cover;border-radius:3px;display:inline-block;vertical-align:middle;box-shadow:0 1px 3px rgba(0,0,0,.25)';
+    img.onerror=()=>{ el.textContent=toFlagEmoji(code); };
+    el.appendChild(img);
   }
-
-  // Hook into detail rendering by wrapping existing renderDetail if present
-  const prevRenderDetail = window.renderDetail;
-  window.renderDetail = function(dateStr){
-    if(prevRenderDetail) prevRenderDetail(dateStr);
-    // origin value from DOM (already set by prev function)
-    const origin = (document.getElementById("origine")?.textContent || "").trim();
-    refreshFlag(origin);
+  function toFlagEmoji(code){ const A=0x1F1E6; return String.fromCodePoint(A+code.charCodeAt(0)-65,A+code.charCodeAt(1)-65); }
+  const prev=window.renderDetail;
+  window.renderDetail=function(dateStr){
+    if(typeof prev==='function') prev(dateStr);
+    setTimeout(()=>{ const o=document.getElementById('origine')?.textContent||''; refreshFlag(o); },0);
   };
-
-  // Also when saving edits (if saveEdit exists)
-  const prevSave = window.saveEdit;
-  window.saveEdit = function(){
-    if(prevSave) prevSave();
-    const origin = (document.getElementById("origine")?.textContent || "").trim();
-    refreshFlag(origin);
-  };
-
-  // On first load, if a fiche is already open
-  document.addEventListener("DOMContentLoaded", () => {
-    const h = location.hash || "#/";
-    if(h.startsWith("#/date=")){
-      setTimeout(()=>{
-        const origin = (document.getElementById("origine")?.textContent || "").trim();
-        refreshFlag(origin);
-      }, 100);
-    }
-  });
+  window.__refreshFlag=refreshFlag;
+  document.addEventListener('DOMContentLoaded',()=>{ const o=document.getElementById('origine')?.textContent||''; if(o&&o!=='—') refreshFlag(o); });
 })();
 </script>
 
@@ -3194,6 +3100,262 @@ document.addEventListener("DOMContentLoaded", () => {
     setTimeout(rerunEnhancers, 900);
   });
   window.addEventListener("hashchange", function(){ setTimeout(rerunEnhancers, 80); }, true);
+})();
+</script>
+
+<!-- FINAL FIX: artist identity + calendar -> detail routing -->
+<script>
+(function(){
+  'use strict';
+
+  const ARTIST_FIXES = {
+    'pomme': {
+      wiki: 'https://fr.wikipedia.org/wiki/Pomme_(chanteuse)',
+      image: 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Pomme%20Bourges%20Autoharpe.jpg'
+    },
+    'indochine': {
+      wiki: 'https://fr.wikipedia.org/wiki/Indochine_(groupe)',
+      image: 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Indochine%202009.JPG'
+    },
+    'téléphone': {
+      wiki: 'https://fr.wikipedia.org/wiki/Téléphone_(groupe)',
+      image: 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Festival%20des%20Vieilles%20Charrues%202016%20-%20Les%20Insus%20-%20039.jpg'
+    },
+    'telephone': {
+      wiki: 'https://fr.wikipedia.org/wiki/Téléphone_(groupe)',
+      image: 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Festival%20des%20Vieilles%20Charrues%202016%20-%20Les%20Insus%20-%20039.jpg'
+    },
+    'clou': {
+      wiki: 'https://fr.wikipedia.org/wiki/Clou_(chanteuse)',
+      image: 'https://commons.wikimedia.org/wiki/Special:Redirect/file/Clou%20Cigale%2018-11-2021.jpg'
+    },
+    'hervé': {
+      wiki: 'https://fr.wikipedia.org/wiki/Hervé_(chanteur)',
+      image: 'https://commons.wikimedia.org/wiki/Special:Redirect/file/P2N2023Herve_1.jpg'
+    },
+    'herve': {
+      wiki: 'https://fr.wikipedia.org/wiki/Hervé_(chanteur)',
+      image: 'https://commons.wikimedia.org/wiki/Special:Redirect/file/P2N2023Herve_1.jpg'
+    }
+  };
+
+  function norm(s){
+    return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  }
+  function dataArray(){
+    if(Array.isArray(window.DATA) && window.DATA.length) return window.DATA;
+    try { if(typeof DATA !== 'undefined' && Array.isArray(DATA)) return DATA; } catch(e){}
+    if(Array.isArray(window.MUSIC_DATA) && window.MUSIC_DATA.length) return window.MUSIC_DATA;
+    try { const a=JSON.parse(localStorage.getItem('MUSIC_DATA_JSON')||'[]'); if(Array.isArray(a)) return a; } catch(e){}
+    return [];
+  }
+  function itemForDate(date){
+    const d=String(date||'').slice(0,10);
+    return dataArray().find(x=>x && String(x.date||'').slice(0,10)===d) || null;
+  }
+  function keyFor(author){ return norm(author); }
+
+  function fixedArtist(author){ return ARTIST_FIXES[keyFor(author)] || null; }
+
+  async function wikidataImage(author){
+    const q=String(author||'').trim();
+    if(!q) return '';
+    try{
+      const search='https://www.wikidata.org/w/api.php?action=wbsearchentities&search='+encodeURIComponent(q)+'&language=fr&uselang=fr&format=json&origin=*&limit=5';
+      const sr=await fetch(search);
+      if(!sr.ok) return '';
+      const sj=await sr.json();
+      for(const r of (sj.search||[])){
+        const id=r.id;
+        const er=await fetch('https://www.wikidata.org/w/api.php?action=wbgetentities&ids='+encodeURIComponent(id)+'&props=claims|labels|descriptions&languages=fr&format=json&origin=*');
+        if(!er.ok) continue;
+        const ej=await er.json();
+        const ent=ej.entities && ej.entities[id];
+        const claims=ent && ent.claims || {};
+        const p18=claims.P18 && claims.P18[0] && claims.P18[0].mainsnak && claims.P18[0].mainsnak.datavalue && claims.P18[0].mainsnak.datavalue.value;
+        if(!p18) continue;
+        const desc=((ent.descriptions||{}).fr||{}).value||'';
+        const inst=(claims.P31||[]).map(x=>x.mainsnak?.datavalue?.value?.id||'');
+        const occ=(claims.P106||[]).map(x=>x.mainsnak?.datavalue?.value?.id||'');
+        const musical= /musicien|chanteur|chanteuse|groupe|artiste|musical/i.test(desc) || inst.some(x=>['Q215380','Q5741069','Q1053574','Q2088357'].includes(x)) || occ.length>0;
+        if(!musical) continue;
+        return 'https://commons.wikimedia.org/wiki/Special:Redirect/file/'+encodeURIComponent(p18.replace(/ /g,'_'));
+      }
+    }catch(e){}
+    return '';
+  }
+
+  async function artistImage(author){
+    const fixed=fixedArtist(author);
+    if(fixed) return fixed.image;
+    return await wikidataImage(author);
+  }
+
+  function setAuthorWiki(author){
+    const el=document.getElementById('auteur');
+    if(!el) return;
+    const name=String(author||'').trim();
+    if(!name){el.textContent='—'; return;}
+    const fixed=fixedArtist(name);
+    if(fixed){
+      el.innerHTML='<a href="'+fixed.wiki.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener noreferrer" class="underline text-indigo-600 hover:text-indigo-800">'+name+' ↗</a>';
+      return;
+    }
+    // Pour les artistes non ambigus, recherche Wikidata/Wikipedia sans utiliser le mot seul comme URL.
+    el.textContent=name;
+    (async()=>{
+      try{
+        const u='https://fr.wikipedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrsearch='+encodeURIComponent(name+' musicien chanteur groupe')+'&gsrnamespace=0&gsrlimit=1&prop=info&inprop=url';
+        const r=await fetch(u); if(!r.ok)return;
+        const j=await r.json(); const pg=Object.values(j?.query?.pages||{})[0];
+        if(pg?.fullurl && document.getElementById('auteur')){
+          document.getElementById('auteur').innerHTML='<a href="'+pg.fullurl.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener noreferrer" class="underline text-indigo-600 hover:text-indigo-800">'+name+' ↗</a>';
+        }
+      }catch(e){}
+    })();
+  }
+
+  async function renderFinalDetail(date){
+    const d=String(date||'').slice(0,10);
+    const item=itemForDate(d) || {};
+    const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v||'—';};
+    set('dateLbl',d);
+    set('titre',item.title||item.titre);
+    setAuthorWiki(item.author||item.auteur);
+    set('origine',item.origin||item['origine (pays auteur)']);
+    // Mise à jour immédiate du drapeau après avoir écrit le pays.
+    try{
+      const originValue = item.origin || item['origine (pays auteur)'] || '';
+      if(typeof window.__refreshFlag === 'function') window.__refreshFlag(originValue);
+    }catch(e){}
+    set('instruments',item.instruments);
+    const yt=item.youtube||item['lien youtube']||'';
+    const ytFrame=document.getElementById('ytFrame');
+    if(ytFrame){
+      let src='';
+      try{const u=new URL(yt); const id=u.hostname.includes('youtu.be')?u.pathname.slice(1):u.searchParams.get('v'); if(id)src='https://www.youtube.com/embed/'+id;}catch(e){}
+      ytFrame.src=src;
+    }
+    const mapFrame=document.getElementById('mapFrame');
+    if(mapFrame) mapFrame.src=item.origin||item['origine (pays auteur)'] ? 'https://www.google.com/maps?q='+encodeURIComponent(item.origin||item['origine (pays auteur)'])+'&output=embed' : '';
+    const photo=document.getElementById('authorImg');
+    if(photo){
+      photo.style.display='block';
+      photo.removeAttribute('src');
+      const url=await artistImage(item.author||item.auteur);
+      if(url){ photo.src=url; photo.alt='Photo de '+(item.author||item.auteur||'artiste'); }
+      else { photo.style.display='none'; }
+    }
+    const status=document.getElementById('authorImgStatus');
+    if(status) status.textContent='';
+    const credit=document.getElementById('authorImgCredit');
+    if(credit) credit.textContent='';
+  }
+
+  function openDetail(date){
+    const d=String(date||'').slice(0,10);
+    if(!itemForDate(d)) return;
+    const cal=document.getElementById('viewCalendar'), det=document.getElementById('viewDetail');
+    if(cal){ cal.classList.add('hidden'); cal.classList.remove('show'); }
+    if(det){
+      det.classList.remove('hidden');
+      det.classList.add('show');
+      det.style.opacity = '1';
+      det.style.transform = 'none';
+      det.style.display = '';
+    }
+    try{ history.replaceState(null,'','#/date='+encodeURIComponent(d)); }catch(e){ location.hash='#/date='+encodeURIComponent(d); }
+    renderFinalDetail(d);
+  }
+
+  // Intercepte le clic AVANT les anciens handlers : c'est la correction de la fiche vierge.
+  document.addEventListener('click',function(ev){
+    const cell=ev.target && ev.target.closest ? ev.target.closest('#grid .day[data-date]') : null;
+    if(cell){
+      const d=cell.dataset.date;
+      if(d && itemForDate(d)){
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        openDetail(d);
+      }
+    }
+  },true);
+
+  // Photos du calendrier : on remplace les résultats ambigus par l'identité musicale exacte.
+  async function refreshCalendarPhotos(){
+    const grid=document.getElementById('grid'); if(!grid)return;
+    for(const cell of Array.from(grid.querySelectorAll('.day[data-date]'))){
+      const item=itemForDate(cell.dataset.date); if(!item)continue;
+      const author=item.author||item.auteur||'';
+      const url=await artistImage(author); if(!url)continue;
+      cell.querySelectorAll('.calendar-artist-photo').forEach(x=>x.remove());
+      cell.classList.add('has-artist-photo');
+      const img=document.createElement('img');
+      img.className='calendar-artist-photo'; img.loading='lazy'; img.decoding='async'; img.alt='Photo de '+author; img.src=url;
+      img.onerror=()=>{img.remove();};
+      const shade=cell.querySelector('.calendar-photo-shade');
+      if(shade) cell.insertBefore(img,shade); else cell.prepend(img);
+    }
+  }
+  const oldRC=window.renderCalendar;
+  window.renderCalendar=function(){
+    if(typeof oldRC==='function') oldRC.apply(this,arguments);
+    setTimeout(refreshCalendarPhotos,50); setTimeout(refreshCalendarPhotos,500);
+  };
+
+  // Retour calendrier : réaffiche le calendrier sans réutiliser l'ancien routeur.
+  document.addEventListener('click',function(ev){
+    if(ev.target && ev.target.closest && ev.target.closest('#backBtn')){
+      ev.preventDefault(); ev.stopImmediatePropagation();
+      const cal=document.getElementById('viewCalendar'), det=document.getElementById('viewDetail');
+      if(det){ det.classList.add('hidden'); det.classList.remove('show'); det.style.opacity=''; det.style.transform=''; }
+      if(cal){ cal.classList.remove('hidden'); cal.classList.add('show'); cal.style.opacity='1'; cal.style.transform='none'; cal.style.display=''; }
+      try{history.replaceState(null,'','#/');}catch(e){location.hash='#/';}
+      if(typeof window.renderCalendar==='function')window.renderCalendar();
+    }
+  },true);
+
+  // Si le fichier est ouvert directement sur une fiche, la rendre immédiatement.
+  document.addEventListener('DOMContentLoaded',function(){
+    const m=(location.hash||'').match(/^#\/date=(.+)$/);
+    if(m) openDetail(decodeURIComponent(m[1]));
+    else setTimeout(refreshCalendarPhotos,150);
+  });
+})();
+</script>
+
+
+<script>
+// === FINAL FLAG GUARD v5 ===
+(function(){
+  const MAP={
+    france:'fr', espagne:'es', italie:'it', allemagne:'de', autriche:'at', 'royaume-uni':'gb', 'royaume uni':'gb', angleterre:'gb', uk:'gb', 'grande-bretagne':'gb', irlande:'ie', pologne:'pl', hongrie:'hu', 'republique tcheque':'cz', tchequie:'cz', slovaquie:'sk', russie:'ru', ukraine:'ua', finlande:'fi', norvege:'no', suede:'se', danemark:'dk', 'pays-bas':'nl', hollande:'nl', belgique:'be', suisse:'ch', portugal:'pt', grece:'gr', turquie:'tr', 'etats-unis':'us', 'etats unis':'us', usa:'us', canada:'ca', mexique:'mx', bresil:'br', argentine:'ar', chili:'cl', perou:'pe', bolivie:'bo', colombie:'co', equateur:'ec', paraguay:'py', uruguay:'uy', chine:'cn', japon:'jp', 'coree du sud':'kr', coree:'kr', inde:'in', indonesie:'id', australie:'au', 'nouvelle-zelande':'nz', islande:'is', roumanie:'ro', bulgarie:'bg', serbie:'rs', croatie:'hr', slovenie:'si', lituanie:'lt', lettonie:'lv', estonie:'ee', luxembourg:'lu', malte:'mt', chypre:'cy', armenie:'am', georgie:'ge', israel:'il', egypte:'eg', maroc:'ma', tunisie:'tn', algerie:'dz', cuba:'cu', 'cap-vert':'cv', 'cap vert':'cv', bosnie:'ba', 'bosnie-herzegovine':'ba', cameroun:'cm', nigeria:'ng', ghana:'gh', senegal:'sn', mali:'ml', guinee:'gn', 'guinee-bissau':'gw', 'cote d ivoire':'ci', 'afrique du sud':'za', namibie:'na', kenya:'ke', tanzanie:'tz', ouganda:'ug', rwanda:'rw', 'republique democratique du congo':'cd', 'rd congo':'cd', congo:'cg', mozambique:'mz', zimbabwe:'zw', zambie:'zm', angola:'ao', ethiopie:'et', madagascar:'mg', maurice:'mu', jamaique:'jm', haiti:'ht', honduras:'hn', nicaragua:'ni', guatemala:'gt', 'costa rica':'cr', panama:'pa', 'republique dominicaine':'do', 'porto rico':'pr', portorico:'pr', iran:'ir', irak:'iq', liban:'lb', syrie:'sy', jordanie:'jo', 'arabie saoudite':'sa', 'emirats arabes unis':'ae', palestine:'ps', mongolie:'mn', vietnam:'vn', thailande:'th', philippines:'ph', malaisie:'my', singapour:'sg', nepal:'np', pakistan:'pk', bangladesh:'bd', 'sri lanka':'lk', afghanistan:'af', kazakhstan:'kz', ouzbekistan:'uz', azerbaidjan:'az', 'papouasie-nouvelle-guinee':'pg', fidji:'fj', hawai:'us'
+  };
+  function clean(v){ return String(v||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[’']/g,' ').replace(/[-_,;()]/g,' ').replace(/\s+/g,' ').trim(); }
+  function codeFor(v){ const s=clean(v); if(!s) return ''; if(/^[a-z]{2}$/.test(s)) return s; if(MAP[s]) return MAP[s]; for(const k in MAP){ const kk=clean(k); if(s===kk || s.includes(kk)) return MAP[k]; } return ''; }
+  function paint(){
+    const el=document.getElementById('flagIcon'), org=document.getElementById('origine'); if(!el||!org) return;
+    const code=codeFor(org.textContent);
+    el.innerHTML='';
+    if(!code) return;
+    const img=document.createElement('img');
+    img.alt='Drapeau '+code.toUpperCase();
+    img.width=60; img.height=40;
+    img.style.cssText='width:60px;height:40px;object-fit:cover;border-radius:4px;display:inline-block;vertical-align:middle;box-shadow:0 1px 4px rgba(0,0,0,.25)';
+    img.onload=function(){ el.replaceChildren(img); };
+    img.onerror=function(){
+      if(img.dataset.fallback==='1'){ el.textContent='🏳️'; return; }
+      img.dataset.fallback='1';
+      img.src='https://cdn.jsdelivr.net/gh/lipis/flag-icons/flags/4x3/'+code+'.svg';
+    };
+    img.src='https://flagcdn.com/w80/'+code+'.png';
+    el.appendChild(img);
+  }
+  window.__paintFinalFlag=paint;
+  document.addEventListener('DOMContentLoaded',paint);
+  window.addEventListener('hashchange',()=>setTimeout(paint,30));
+  const old=window.__refreshFlag;
+  window.__refreshFlag=function(origin){ if(typeof old==='function') { try{old(origin);}catch(e){} } setTimeout(paint,0); };
+  setInterval(paint,800);
 })();
 </script>
 </body>
