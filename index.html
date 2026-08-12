@@ -1970,6 +1970,7 @@ document.addEventListener("DOMContentLoaded", function(){
 <script>
 (function(){
   "use strict";
+  // PATCH DATE XLSX : les dates Excel sont traitées comme des dates calendaires, sans fuseau horaire.
 
   function ensureStatus(){
     return document.getElementById("importStatus");
@@ -1994,10 +1995,15 @@ document.addEventListener("DOMContentLoaded", function(){
 
   function toISO(value){
     if(value==null || value==="") return "";
-    if(value instanceof Date && !isNaN(value)){
-      return value.getFullYear()+"-"+pad(value.getMonth()+1)+"-"+pad(value.getDate());
-    }
+
+    // Pour musique.xlsx, on ne convertit plus les dates Excel en objet Date.
+    // Le numéro de série Excel est converti directement en date UTC :
+    // cela évite tout décalage d'un jour lié au fuseau horaire du navigateur.
     if(typeof value==="number") return excelSerialToISO(value);
+
+    if(value instanceof Date && !isNaN(value)){
+      return value.getUTCFullYear()+"-"+pad(value.getUTCMonth()+1)+"-"+pad(value.getUTCDate());
+    }
 
     const v=String(value).trim();
     let m=v.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
@@ -2026,7 +2032,7 @@ document.addEventListener("DOMContentLoaded", function(){
       const response=await fetch("musique.xlsx?ts="+Date.now(),{cache:"no-store"});
       if(!response.ok) throw new Error("musique.xlsx introuvable ("+response.status+").");
 
-      const wb=XLSX.read(await response.arrayBuffer(),{type:"array",cellDates:true});
+      const wb=XLSX.read(await response.arrayBuffer(),{type:"array",cellDates:false});
       const ws=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
 
