@@ -41,6 +41,8 @@
     const obj = idx>=0 ? {...DATA[idx]} : {date: CURRENT_DATE};
     if(t) { obj.title = t; obj.titre = t; }
     if(a) { obj.author = a; obj.auteur = a; }
+    obj.year = obj.year || obj.annee || obj["année"] || "";
+    obj.annee = obj.year;
     obj.origin = o; obj["origine (pays auteur)"] = o;
     obj.instruments = ins;
     obj.youtube = yt;
@@ -535,17 +537,96 @@ async function readFileText(file){
   return await new Promise((resolve, reject)=>{ const fr=new FileReader(); fr.onload=()=>resolve(fr.result); fr.onerror=()=>reject(fr.error); fr.readAsText(file,"utf-8"); });
 }
 function mapHeaders(hdr){
-  const low = hdr.map(h=> lowerNoAccents(String(h||"")));
-  function findOne(names){ for(const name of names){ const idx=low.indexOf(lowerNoAccents(name)); if(idx>=0) return idx; } return -1; }
+  // Lecture tolérante des intitulés du nouveau musique.xlsx.
+  // On accepte accents, apostrophes, espaces insécables et variantes de noms.
+  const clean = s => lowerNoAccents(String(s||"")
+    .replace(/[\u00A0\u2007\u202F]/g," ")
+    .replace(/[’‘`]/g,"'")
+    .replace(/[\"«»]/g,"")
+    .replace(/\s+/g," ").trim());
+  const low = hdr.map(clean);
+  const aliases = {
+    date:["date","jour","day","date du morceau","date de diffusion"],
+    titre:["titre","title","morceau","oeuvre","œuvre","piece","titre de l'oeuvre","titre de l œuvre","nom de l'oeuvre","nom de l œuvre"],
+    auteur:["auteur","artiste","artist","groupe","interprete","interpret","compositeur","compositeur artiste","auteur artiste","artiste auteur","nom de l'artiste","nom de l auteur","nom de l'artiste / groupe"],
+    origin:["origine (pays auteur)","origine","pays","pays d'origine","pays de l'auteur","origine du morceau"],
+    instr:["instruments","instrument","instruments utilisés","instruments utilises"],
+    yt:["Lien YouTube (vérifiée)","lien youtube (vérifiée)","Lien YouTube vérifiée","lien youtube verifiee"],
+    year:["année","annee","year","an","année de création","annee de creation","annee creation","année creation","année du morceau","annee du morceau","année de l'oeuvre","annee de l'oeuvre"]
+  };
+  function exactOrContains(key){
+    const names=aliases[key].map(clean);
+    // priorité à la correspondance exacte
+    for(const name of names){ const i=low.indexOf(name); if(i>=0) return i; }
+    // puis aux intitulés plus longs contenant l'intitulé attendu
+    for(let i=0;i<low.length;i++){
+      const h=low[i];
+      if(!h) continue;
+      for(const name of names){
+        if(name && (h.includes(name) || name.includes(h))) return i;
+      }
+    }
+    return -1;
+  }
   return {
-    date: findOne(["date","jour","day"]),
-    titre: findOne(["titre","title","morceau","oeuvre","œuvre","piece"]),
-    auteur: findOne(["auteur","artiste","artist","groupe","interprete","interpret"]),
-    origin: findOne(["origine (pays auteur)","origine","pays"]),
-    instr: findOne(["instruments","instrument"]),
-    yt: findOne(["youtube","lien youtube","url youtube","lien"]),
+    date: exactOrContains("date"),
+    titre: exactOrContains("titre"),
+    auteur: exactOrContains("auteur"),
+    origin: exactOrContains("origin"),
+    instr: exactOrContains("instr"),
+    yt: exactOrContains("yt"),
+    year: exactOrContains("year")
   };
 }
+
+function findHeaderRow(rows){
+  // Certains fichiers Excel comportent une ligne de titre avant les en-têtes.
+  // On cherche donc la vraie ligne d'en-têtes dans les 12 premières lignes.
+  let best={index:0,map:mapHeaders(rows[0]||[]),score:-1};
+  const max=Math.min(rows.length,12);
+  for(let i=0;i<max;i++){
+    const map=mapHeaders(rows[i]||[]);
+    const score=[map.date,map.titre,map.auteur,map.year,map.origin,map.instr,map.yt].filter(x=>x>=0).length;
+    if(score>best.score) best={index:i,map,score};
+    if(map.date>=0 && map.titre>=0 && map.auteur>=0) return {index:i,map};
+  }
+  return best;
+}
+function toISODate(value){
+  if(value == null || value === "") return "";
+  if(value instanceof Date && !isNaN(value)) {
+    return value.getFullYear()+"-"+pad(value.getMonth()+1)+"-"+pad(value.getDate());
+  }
+  if(typeof value === "number" && typeof XLSX !== "undefined" && XLSX.SSF){
+    const d = XLSX.SSF.parse_date_code(value);
+    if(d) return d.y+"-"+pad(d.m)+"-"+pad(d.d);
+  }
+  const v = String(value).trim();
+  let m = v.match(/^(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})$/);
+  if(m) return m[3]+"-"+pad(m[2])+"-"+pad(m[1]);
+  m = v.match(/^(\\d{4})[\\/.-](\\d{1,2})[\\/.-](\\d{1,2})/);
+  if(m) return m[1]+"-"+pad(m[2])+"-"+pad(m[3]);
+  const d = new Date(v);
+  return isNaN(d) ? "" : d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+}
+
+function normalizeYear(value){
+  if(value == null || value === "") return "";
+  if(typeof value === "number" && isFinite(value)) return String(Math.trunc(value));
+  const m = String(value).match(/\\b(1[0-9]{3}|20[0-9]{2}|21[0-9]{2})\\b/);
+  return m ? m[1] : String(value).trim();
+}
+
+function displayTitle(item){
+  const title = String(item?.title ?? item?.titre ?? "").trim();
+  const year = normalizeYear(item?.year ?? item?.annee ?? item?.["année"]);
+  if(!title) return "Titre";
+  if(!year) return title;
+  // Évite les doublons si l'ancien fichier contient déjà l'année dans le titre.
+  const withoutYear = title.replace(/\\s*\\((1[0-9]{3}|20[0-9]{2}|21[0-9]{2})\\)\\s*$/,"").trim();
+  return `${withoutYear} (${year})`;
+}
+
 async function importFile(file){
   const ext = (file.name.split(".").pop()||"").toLowerCase();
   let rows=[];
@@ -570,12 +651,14 @@ async function importFile(file){
 
   let updated=0, inserted=0;
   for(const r of rows.slice(1)){
-    const date = norm(r[map.date]).slice(0,10); if(!date) continue;
+    const date = toISODate(r[map.date]); if(!date) continue;
     const obj = {
       date,
       title: norm(r[map.titre]),
-      auteur: norm(r[map.auteur]) || norm(r[map.author]),
-      author: norm(r[map.auteur]) || norm(r[map.author]),
+      auteur: norm(r[map.auteur]),
+      author: norm(r[map.auteur]),
+      year: map.year>=0 ? normalizeYear(r[map.year]) : "",
+      annee: map.year>=0 ? normalizeYear(r[map.year]) : "",
       origin: map.origin>=0 ? norm(r[map.origin]) : "",
       instruments: map.instr>=0 ? norm(r[map.instr]) : "",
       youtube: map.yt>=0 ? norm(r[map.yt]) : "",
@@ -592,13 +675,14 @@ async function importFile(file){
 
 // ===== Export =====
 function exportXLSX(){
-  const hdr = ["date","titre","auteur","origine (pays auteur)","instruments","youtube"];
+  const hdr = ["date","titre","auteur","année","origine (pays auteur)","instruments","youtube"];
   const arr = [hdr];
   for(const x of DATA){
     arr.push([
       x.date||"",
       x.title || x.titre || "",
       x.author || x.auteur || "",
+      x.year || x.annee || x["année"] || "",
       x.origin || x["origine (pays auteur)"] || "",
       x.instruments || "",
       x.youtube || x["lien youtube"] || ""
@@ -650,7 +734,7 @@ function renderCalendar(){
     const cell = document.createElement("button");
     cell.type="button";
     cell.className = "day rounded-xl border w-full text-left p-2 " + (has ? "bg-emerald-50 border-emerald-200" : "bg-white");
-    cell.innerHTML = `<div class="text-xs text-slate-500">${d}</div>` + (has ? `<div class="mt-1 font-semibold text-sm line-clamp-3">${htmlEscape(item.title || item.titre || "Titre")}</div><div class="text-xs text-slate-500 line-clamp-1">${htmlEscape(item.author || item.auteur || "")}</div>` : `<div class="text-xs text-slate-400 mt-1">—</div>`);
+    cell.innerHTML = `<div class="text-xs text-slate-500">${d}</div>` + (has ? `<div class="mt-1 font-semibold text-sm line-clamp-3">${htmlEscape(displayTitle(item))}</div><div class="text-xs text-slate-500 line-clamp-1">${htmlEscape(item.author || item.auteur || "")}</div>` : `<div class="text-xs text-slate-400 mt-1">—</div>`);
     cell.addEventListener("click", ()=>{
       location.hash = "#/date=" + dateStr; // route vers fiche
     });
@@ -660,7 +744,7 @@ function renderCalendar(){
       usedThisMonth++;
       const row = document.createElement("div");
       row.className = "px-2 py-1 rounded hover:bg-slate-50 text-sm flex items-center justify-between";
-      row.innerHTML = `<div><span class="text-slate-500 text-xs">${dateStr}</span> — <b>${htmlEscape(item.title || item.titre || "Titre")}</b> <span class="text-slate-600">(${htmlEscape(item.author || item.auteur || "Auteur")})</span></div>
+      row.innerHTML = `<div><span class="text-slate-500 text-xs">${dateStr}</span> — <b>${htmlEscape(displayTitle(item))}</b> <span class="text-slate-600">(${htmlEscape(item.author || item.auteur || "Auteur")})</span></div>
       <a class="text-indigo-600 underline text-xs" href="#/date=${encodeURIComponent(dateStr)}">ouvrir</a>`;
       list.appendChild(row);
     }
@@ -677,7 +761,7 @@ function renderDetail(dateStr){
   const data = indexByDate(DATA);
   const item = data.get(dateStr) || {};
   document.getElementById("dateLbl").textContent = dateStr || "—";
-  document.getElementById("titre").textContent = item.title || item.titre || "—";
+  document.getElementById("titre").textContent = displayTitle(item) === "Titre" ? "—" : displayTitle(item);
   document.getElementById("auteur").textContent = item.author || item.auteur || "—";
   document.getElementById("origine").textContent = item.origin || item["origine (pays auteur)"] || "—";
   document.getElementById("instruments").textContent = item.instruments || "—";
@@ -1212,7 +1296,7 @@ parseHash();
     const item = map.get(dateStr) || {};
     // Champs texte
     setText("dateLbl", dateStr);
-    setText("titre", item.title || item.titre);
+    setText("titre", typeof displayTitle==="function" ? displayTitle(item) : (item.title || item.titre));
     setText("auteur", item.author || item.auteur);
     setText("origine", item.origin || item["origine (pays auteur)"]);
     setText("instruments", item.instruments);
@@ -1625,238 +1709,7 @@ parseHash();
 </script>
 
 
-<!-- FIX10d: Chargement automatique de 'liste_defaut.xlsx' au démarrage -->
-<script>
-(function(){
-  // Import par AoA (array of arrays) -> logique identique à l'import manuel
-  function lowerNoAccents(s){ return String(s||"").normalize("NFD").replace(/\p{Diacritic}+/gu,"").toLowerCase().trim(); }
-  function norm(s){ return (s||"").toString().trim(); }
-  function indexByDate(arr){ const m=new Map(); for(const x of arr||[]){ if(x && x.date){ m.set(x.date.slice(0,10), x); } } return m; }
-  function saveToLocal(arr){ try{ localStorage.setItem("MUSIC_DATA_JSON", JSON.stringify(arr||[])); }catch(e){} }
-  function loadFromLocal(){ try{ const s=localStorage.getItem("MUSIC_DATA_JSON"); if(s){ const a=JSON.parse(s); if(Array.isArray(a)) return a; } }catch(e){} return (window.MUSIC_DATA||[]); }
-  function mapHeaders(hdr){
-    const low = hdr.map(h=> lowerNoAccents(String(h||"")));
-    function findOne(names){ for(const name of names){ const idx=low.indexOf(lowerNoAccents(name)); if(idx>=0) return idx; } return -1; }
-    return {
-      date: findOne(["date","jour","day"]),
-      titre: findOne(["titre","title","morceau","oeuvre","œuvre","piece"]),
-      auteur: findOne(["auteur","artiste","artist","groupe","interprete","interpret"]),
-      origin: findOne(["origine (pays auteur)","origine","pays"]),
-      instr: findOne(["instruments","instrument"]),
-      yt: findOne(["youtube","lien youtube","url youtube","lien"]),
-    };
-  }
-	  function mergeRowsIntoData(rows){
-    if(!rows || !rows.length) return {updated:0,inserted:0};
-    const hdr = (rows[0]||[]).map(x=> String(x||"").trim());
-    const map = mapHeaders(hdr);
-    if(map.date<0 || map.titre<0 || map.auteur<0){
-      console.warn("[liste_defaut] colonnes minimales manquantes (date, titre, auteur).");
-      return {updated:0,inserted:0};
-    }
-    let DATA = loadFromLocal();
-    let dataMap = indexByDate(DATA);
-    let updated=0, inserted=0;
-    for(const r of rows.slice(1)){
-      const date = norm(r[map.date]).slice(0,10); if(!date) continue;
-      const obj = {
-        date,
-        title: norm(r[map.titre]),
-        auteur: norm(r[map.auteur]) || norm(r[map.author]),
-        author: norm(r[map.auteur]) || norm(r[map.author]),
-        origin: map.origin>=0 ? norm(r[map.origin]) : "",
-        instruments: map.instr>=0 ? norm(r[map.instr]) : "",
-        youtube: map.yt>=0 ? norm(r[map.yt]) : "",
-      };
-      if(dataMap.has(date)){ dataMap.set(date, {...dataMap.get(date), ...obj}); updated++; }
-      else { dataMap.set(date, obj); inserted++; }
-    }
-    DATA = Array.from(dataMap.values()).sort((a,b)=> (a.date<b.date?-1:1));
-    window.DATA = DATA; window.MUSIC_DATA = DATA;
-    saveToLocal(DATA);
-    if(typeof renderCalendar==="function"){ try{ renderCalendar(); }catch(e){} }
-    return {updated, inserted};
-  }
 
-  async function loadDefaultExcel(){
-    try{
-      const res = await fetch("liste_defaut.xlsx");
-      if(!res.ok){ console.info("[liste_defaut] non trouvé (status "+res.status+")."); return; }
-      const buf = await res.arrayBuffer();
-      if(typeof XLSX === "undefined"){ console.warn("[liste_defaut] XLSX non chargé."); return; }
-      const wb = XLSX.read(buf, {type:"array"});
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1});
-      const {updated, inserted} = mergeRowsIntoData(rows);
-      const s = document.getElementById("importStatus");
-      if(s){ s.textContent = `Chargement auto de la liste par défaut : ${updated} mis à jour, ${inserted} ajoutés.`; }
-    }catch(e){
-      console.warn("[liste_defaut] erreur chargement :", e);
-    }
-  }
-
-  // Démarrage : tenter de charger 'liste_defaut.xlsx' (même dossier que la page)
-  document.addEventListener("DOMContentLoaded", ()=>{
-    // Petit délai pour laisser Tailwind & autres scripts init
-    setTimeout(loadDefaultExcel, 150);
-  });
-})();
-</script>
-
-
-
-
-
-<!-- FIX10e-strong: autoload 'liste_defaut.xlsx' + messages clairs -->
-<script>
-(function(){
-  function showInfo(msg, type){
-    var bar = document.getElementById("importStatus");
-    if(!bar){
-      // crée une petite zone d’info sous la barre d’actions
-      var top = document.querySelector(".flex.flex-wrap.gap-2.items-center");
-      bar = document.createElement("div");
-      bar.id = "importStatus";
-      bar.style.marginTop = "8px";
-      bar.style.fontSize = "0.9rem";
-      bar.style.padding = "6px 10px";
-      bar.style.borderRadius = "10px";
-      bar.style.background = type==="error" ? "#fee2e2" : "#ecfeff";
-      bar.style.color = type==="error" ? "#991b1b" : "#0e7490";
-      if(top && top.parentNode){ top.parentNode.appendChild(bar); }
-      else { document.body.insertBefore(bar, document.body.firstChild); }
-    }
-    bar.textContent = msg;
-  }
-
-  function lowerNoAccents(s){ return String(s||"").normalize("NFD").replace(/\p{Diacritic}+/gu,"").toLowerCase().trim(); }
-  function norm(s){ return (s||"").toString().trim(); }
-  function indexByDate(arr){ const m=new Map(); for(const x of arr||[]){ if(x && x.date){ m.set(x.date.slice(0,10), x); } } return m; }
-  function saveToLocal(arr){ try{ localStorage.setItem("MUSIC_DATA_JSON", JSON.stringify(arr||[])); }catch(e){} }
-  function loadFromLocal(){ try{ const s=localStorage.getItem("MUSIC_DATA_JSON"); if(s){ const a=JSON.parse(s); if(Array.isArray(a)) return a; } }catch(e){} return (window.MUSIC_DATA||[]); }
-  function mapHeaders(hdr){
-    const low = hdr.map(h=> lowerNoAccents(String(h||"")));
-    function findOne(names){ for(const name of names){ const idx=low.indexOf(lowerNoAccents(name)); if(idx>=0) return idx; } return -1; }
-    return { date: findOne(["date","jour","day"]),
-             titre: findOne(["titre","title","morceau","oeuvre","œuvre","piece"]),
-             auteur: findOne(["auteur","artiste","artist","groupe","interprete","interpret"]),
-             origin: findOne(["origine (pays auteur)","origine","pays"]),
-             instr: findOne(["instruments","instrument"]),
-             yt: findOne(["youtube","lien youtube","url youtube","lien"]) };
-  }
-  function mergeRowsIntoData(rows){
-    if(!rows || !rows.length) return {updated:0,inserted:0};
-    const hdr = (rows[0]||[]).map(x=> String(x||"").trim());
-    const map = mapHeaders(hdr);
-    if(map.date<0 || map.titre<0 || map.auteur<0){ return {updated:0,inserted:0}; }
-    let DATA = loadFromLocal(); let dataMap = indexByDate(DATA); let updated=0, inserted=0;
-    for(const r of rows.slice(1)){
-      const date = norm(r[map.date]).slice(0,10); if(!date) continue;
-      const obj = { date,
-        title: norm(r[map.titre]),
-        auteur: norm(r[map.auteur]) || norm(r[map.author]),
-        author: norm(r[map.auteur]) || norm(r[map.author]),
-        origin: map.origin>=0 ? norm(r[map.origin]) : "",
-        instruments: map.instr>=0 ? norm(r[map.instr]) : "",
-        youtube: map.yt>=0 ? norm(r[map.yt]) : "" };
-      if(dataMap.has(date)){ dataMap.set(date, {...dataMap.get(date), ...obj}); updated++; }
-      else { dataMap.set(date, obj); inserted++; }
-    }
-    DATA = Array.from(dataMap.values()).sort((a,b)=> (a.date<b.date?-1:1));
-    window.DATA = DATA; window.MUSIC_DATA = DATA; saveToLocal(DATA);
-    if(typeof renderCalendar==="function"){ try{ renderCalendar(); }catch(e){} }
-    return {updated, inserted};
-  }
-
-  async function autoloadDefaultExcel(){
-    try{
-      if(typeof XLSX === "undefined"){ showInfo("Bibliothèque Excel (XLSX) non chargée : autoload ignoré.", "error"); return; }
-      // fetch relatif vers le même répertoire
-      const res = await fetch("liste_defaut.xlsx");
-      if(!res.ok){ showInfo("Aucun 'liste_defaut.xlsx' détecté (code "+res.status+"). La page s’ouvre normalement.", "error"); return; }
-      const buf = await res.arrayBuffer();
-      const wb = XLSX.read(buf, {type:"array"});
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1});
-      const {updated, inserted} = mergeRowsIntoData(rows);
-      showInfo(`Chargement auto de 'liste_defaut.xlsx' : ${updated} mis à jour, ${inserted} ajoutés.`, "ok");
-    }catch(e){
-      // Cas fréquent: file:// + restrictions du navigateur
-      showInfo("Impossible de lire 'liste_defaut.xlsx' automatiquement (contexte local). Ouvre le fichier via un petit serveur local ou utilise le bouton Import.", "error");
-      console.warn("[autoload] error:", e);
-    }
-  }
-
-  document.addEventListener("DOMContentLoaded", function(){
-    if(window.__modernInit) return; window.__modernInit = true;
-    // N'auto-charge que sur la version PROF (si le bouton élève est visible)
-    if(document.getElementById("makeStudentBtn")){
-      setTimeout(autoloadDefaultExcel, 200);
-    }
-  });
-})();
-</script>
-
-
-<script>
-// Fallback sans serveur : si autoload échoue, on propose automatiquement d'ouvrir le fichier
-(function(){
-  function activateFullDropZone(){
-    // Ajoute un dropzone global si non présent
-    var dz = document.getElementById("globalDropZone");
-    if(!dz){
-      dz = document.createElement("div");
-      dz.id = "globalDropZone";
-      dz.style.position = "fixed";
-      dz.style.inset = "0";
-      dz.style.border = "3px dashed #0ea5e9";
-      dz.style.borderRadius = "16px";
-      dz.style.display = "none";
-      dz.style.alignItems = "center";
-      dz.style.justifyContent = "center";
-      dz.style.background = "rgba(14,165,233,0.06)";
-      dz.style.zIndex = "9999";
-      dz.innerHTML = '<div style="font-size:1.1rem;color:#0e7490;background:#ecfeff;padding:10px 14px;border-radius:12px">Dépose ton fichier <b>liste_defaut.xlsx</b> ici</div>';
-      document.body.appendChild(dz);
-
-      ["dragenter","dragover"].forEach(function(evName){
-        window.addEventListener(evName, function(e){ e.preventDefault(); dz.style.display="flex"; });
-      });
-      ["dragleave","drop"].forEach(function(evName){
-        window.addEventListener(evName, function(e){ if(evName!=="drop") e.preventDefault(); if(evName==="drop") setTimeout(function(){dz.style.display="none";}, 250); else dz.style.display="none"; });
-      });
-    }
-  }
-
-  function openFilePicker(){
-    var input = document.getElementById("file");
-    if(input){
-      try { input.click(); } catch(e){}
-    }
-  }
-
-  // Ecoute un message d'échec venant du script d'autoload précédent
-  // On n'altère pas l'existant : on réagit juste en ouvrant le picker et en activant le drop.
-  document.addEventListener("DOMContentLoaded", function(){
-    if(window.__modernInit) return; window.__modernInit = true;
-    activateFullDropZone();
-    // Si le bandeau importStatus contient l'erreur "Impossible de lire 'liste_defaut.xlsx' automatiquement"
-    var status = document.getElementById("importStatus");
-    if(status && /Impossible de lire 'liste_defaut\.xlsx' automatiquement/i.test(status.textContent||"")){
-      setTimeout(openFilePicker, 300);
-    }
-  });
-
-  // Exporte une fonction globale que le script d'autoload peut appeler en cas d'échec
-  window.__onAutoloadExcelFailed = function(){
-    activateFullDropZone();
-    openFilePicker();
-  };
-})();
-</script>
-
-
-<script src="liste_defaut.js"></script>
 
 <script>
 document.addEventListener("DOMContentLoaded", function(){
@@ -1894,7 +1747,7 @@ document.addEventListener("DOMContentLoaded", function(){
 </script>
 
 
-<!-- LOCK FUTURE DAYS (student) + hide future titles in list -->
+<!-- LOCK FUTURE DAYS (student) — les morceaux restent accessibles dès le jour J et tous les jours suivants -->
 <script>
 (function(){
   function parisTodayYmd(){
@@ -1904,7 +1757,8 @@ document.addEventListener("DOMContentLoaded", function(){
   function pad(n){ return String(n).padStart(2,"0"); }
   function isPastDay(ymd){
     const today = parisTodayYmd();
-    // Autoriser le JOUR MÊME (débloqué le jour J)
+    // Débloqué le jour J ET reste définitivement accessible après le jour J.
+    // Seuls les jours futurs sont verrouillés.
     return (ymd <= today);
   }
   function q(id){ return document.getElementById(id); }
@@ -1971,7 +1825,7 @@ document.addEventListener("DOMContentLoaded", function(){
       }
       cell.className = baseCls;
 
-      const title = item ? (item.title || item.titre || "Titre") : "";
+      const title = item ? (typeof displayTitle==="function" ? displayTitle(item) : (item.title || item.titre || "Titre")) : "";
       const author = item ? (item.author || item.auteur || "") : "";
       const lockedLabel = (!past && has) ? `<div class="mt-1 text-xs text-amber-700">🔒 À découvrir ce jour-là</div>` : "";
       cell.innerHTML = `<div class="text-xs text-slate-500">${d}</div>`
@@ -2112,106 +1966,135 @@ document.addEventListener("DOMContentLoaded", function(){
 </script>
 
 
-<!-- === AUTOLOAD PATCH v6: charge 'musique.xlsx' et RÉINITIALISE les données au démarrage === -->
+<!-- === AUTOLOAD : musique.xlsx avec année séparée === -->
 <script>
 (function(){
-  // ------- UI status -------
-  function ensureBar(){
-    var bar=document.getElementById("importStatus");
-    if(!bar){
-      var top=document.querySelector(".flex.flex-wrap.gap-2.items-center")||document.body;
-      bar=document.createElement("div");
-      bar.id="importStatus";
-      bar.style.margin="10px auto";
-      bar.style.padding="10px 14px";
-      bar.style.borderRadius="12px";
-      bar.style.maxWidth="1100px";
-      bar.style.fontSize="0.95rem";
-      bar.style.background="#ecfeff"; bar.style.color="#0e7490";
-      top.appendChild(bar);
-    }
-    return bar;
+  "use strict";
+
+  function ensureStatus(){
+    return document.getElementById("importStatus");
   }
-  function info(msg,kind){
-    var b=ensureBar();
-    if(kind==="error"){b.style.background="#fee2e2"; b.style.color="#991b1b";}
-    else if(kind==="ok"){b.style.background="#ecfeff"; b.style.color="#0e7490";}
-    else{b.style.background="#fef9c3"; b.style.color="#713f12";}
-    b.textContent=msg;
+  function status(msg, kind){
+    const el=ensureStatus();
+    if(el){
+      el.textContent=msg;
+      el.className="text-xs mt-1";
+      if(kind==="error") el.style.color="#fca5a5";
+      else if(kind==="ok") el.style.color="#67e8f9";
+      else el.style.color="#fbbf24";
+    }
   }
 
-  // ------- Helpers -------
-  function lowerNoAccents(s){return String(s||"").normalize("NFD").replace(/\p{Diacritic}+/gu,"").toLowerCase().trim();}
-  function norm(s){return (s==null?"":String(s)).trim();}
+  function excelSerialToISO(n){
+    const epoch=Date.UTC(1899,11,30);
+    const d=new Date(epoch + Math.round(Number(n)*86400*1000));
+    if(isNaN(d)) return "";
+    return d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1)+"-"+pad(d.getUTCDate());
+  }
 
-  function excelSerialToISO(n){var epoch=new Date(Date.UTC(1899,11,30));var ms=Math.round((Number(n)||0)*86400*1000);var d=new Date(epoch.getTime()+ms);var y=d.getUTCFullYear(),m=String(d.getUTCMonth()+1).padStart(2,"0"),da=String(d.getUTCDate()).padStart(2,"0");return y+"-"+m+"-"+da;}
-  function toISO(s){if(s==null||s==="")return"";if(typeof s==="number")return excelSerialToISO(s);s=String(s).trim().replace(/[\.\/]/g,"-");var m1=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(m1)return m1[1]+"-"+m1[2]+"-"+m1[3];var m2=s.match(/^(\d{2})-(\d{2})-(\d{4})$/);if(m2)return m2[3]+"-"+m2[2]+"-"+m2[1];var m3=s.match(/^(\d{4}-\d{2}-\d{2})T/);if(m3)return m3[1];var d=new Date(s);if(!isNaN(d)){var y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),da=String(d.getDate()).padStart(2,"0");return y+"-"+m+"-"+da;}return"";}
-
-  function mapHeaders(hdr){const low=hdr.map(h=>lowerNoAccents(String(h||"")));function findOne(names){for(const name of names){const idx=low.indexOf(lowerNoAccents(name));if(idx>=0)return idx;}return-1;}return{date:findOne(["date","jour","day"]),titre:findOne(["titre","title","morceau","oeuvre","œuvre","piece"]),auteur:findOne(["auteur","artiste","artist","groupe","interprete","interpret"]),origin:findOne(["origine (pays auteur)","origine","pays"]),instr:findOne(["instruments","instrument"]),yt:findOne(["youtube","lien youtube","url youtube","lien"]),};}
-
-  function indexByDate(arr){const m=new Map();for(const x of(arr||[])){if(x&&x.date){m.set(x.date.slice(0,10),x);}}return m;}
-  function saveToLocal(arr){try{localStorage.setItem("MUSIC_DATA_JSON",JSON.stringify(arr||[]));}catch(e){}}
-  function loadFromLocal(){try{const s=localStorage.getItem("MUSIC_DATA_JSON");if(s){const a=JSON.parse(s);if(Array.isArray(a))return a;}}catch(e){}return(window.MUSIC_DATA||[]);}
-
-  function mergeRowsIntoData(rows){
-    if(!rows||!rows.length)return{updated:0,inserted:0};
-    const hdr=(rows[0]||[]).map(x=>String(x||"").trim());
-    const map=mapHeaders(hdr);
-    if(map.date<0||map.titre<0||map.auteur<0){info("Dans 'musique.xlsx', il faut au minimum les colonnes : date, titre, auteur.","error");return{updated:0,inserted:0};}
-    let DATA=loadFromLocal(); let dataMap=indexByDate(DATA); let updated=0,inserted=0;
-    for(const r of rows.slice(1)){
-      const dateISO=toISO(r[map.date]); if(!dateISO) continue;
-      const obj={date:dateISO,title:norm(r[map.titre]),auteur:norm(r[map.auteur])||norm(r[map.author]),author:norm(r[map.auteur])||norm(r[map.author]),origin:map.origin>=0?norm(r[map.origin]):"",instruments:map.instr>=0?norm(r[map.instr]):"",youtube:map.yt>=0?norm(r[map.yt]):"",};
-      if(dataMap.has(dateISO)){dataMap.set(dateISO,{...dataMap.get(dateISO),...obj});updated++;} else {dataMap.set(dateISO,obj);inserted++;}
+  function toISO(value){
+    if(value==null || value==="") return "";
+    if(value instanceof Date && !isNaN(value)){
+      return value.getFullYear()+"-"+pad(value.getMonth()+1)+"-"+pad(value.getDate());
     }
-    DATA=Array.from(dataMap.values()).sort((a,b)=>(a.date<b.date?-1:1));
-    window.DATA=DATA; window.MUSIC_DATA=DATA; saveToLocal(DATA);
-	    if(typeof renderCalendar==="function"){try{renderCalendar();}catch(e){}}
-	    return{updated,inserted};
-	  }
+    if(typeof value==="number") return excelSerialToISO(value);
 
-	  async function ensureXLSX(){if(typeof XLSX!=="undefined")return; await new Promise((resolve,reject)=>{const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";s.onload=resolve; s.onerror=()=>reject(new Error("Échec chargement XLSX"));document.head.appendChild(s);});}
-	  async function tryFetchOne(url){try{const res=await fetch(url,{cache:"no-store"});if(res.ok)return await res.arrayBuffer();}catch(e){}return null;}
-	  function clearStoredMusicData(){
-	    try{ localStorage.removeItem("MUSIC_DATA_JSON"); }catch(e){}
-	    window.DATA = [];
-	    window.MUSIC_DATA = [];
-	    if(typeof DATA !== "undefined") DATA = [];
-	    if(typeof dataMap !== "undefined" && dataMap instanceof Map) dataMap.clear();
-	  }
+    const v=String(value).trim();
+    let m=v.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+    if(m) return m[3]+"-"+pad(m[2])+"-"+pad(m[1]);
 
-	  async function autoloadMusiqueExcel(){
-	    const openedAsLocalFile = location.protocol === "file:";
-	    if(openedAsLocalFile){info("La page est ouverte en fichier local : le navigateur peut bloquer la lecture automatique de 'musique.xlsx'. Ouvre-la via un serveur local pour le chargement au démarrage.","warn");}
-	    info("Chargement automatique de 'musique.xlsx'…","ok");
-	    try{
-	      clearStoredMusicData();
-	      if(typeof renderCalendar==="function"){ try{ renderCalendar(); }catch(e){} }
-	      await ensureXLSX();
-	      const candidates=["musique.xlsx","./musique.xlsx","data/musique.xlsx","./data/musique.xlsx"];
-	      let buf=null,used=null;
-	      for(const url of candidates){buf=await tryFetchOne(url);if(buf){used=url;break;}}
-	      if(!buf){
-	        if(openedAsLocalFile){
-	          info("Lecture automatique bloquée en mode fichier local. 'musique.xlsx' doit rester à côté du HTML, puis la page doit être ouverte via un serveur local pour être chargée au démarrage.","error");
-	        }else{
-	          info("Aucun fichier détecté. Place 'musique.xlsx' dans le même dossier que la page.","error");
-	        }
-	        return;
-	      }
+    m=v.match(/^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})/);
+    if(m) return m[1]+"-"+pad(m[2])+"-"+pad(m[3]);
 
-	      const wb=XLSX.read(buf,{type:"array"});
-	      const ws=wb.Sheets[wb.SheetNames[0]];
-	      const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true});
-	      const {updated,inserted}=mergeRowsIntoData(rows);
-	      info(`✅ Fichier chargé : ${updated} mis à jour, ${inserted} ajoutés.`, "ok");
-	    }catch(e){
-	      console.error("[autoload musique reset] error:",e);
-	      info("Échec du chargement auto de 'musique.xlsx' : "+(e&&e.message?e.message:e),"error");
-	    }
-	  }
+    const d=new Date(v);
+    return isNaN(d) ? "" : d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+  }
 
-  document.addEventListener("DOMContentLoaded",function(){setTimeout(autoloadMusiqueExcel,200);});
+  function normalizeYear(value){
+    if(value==null || value==="") return "";
+    if(typeof value==="number" && isFinite(value)) return String(Math.trunc(value));
+    const m=String(value).match(/\b(1[0-9]{3}|20[0-9]{2}|21[0-9]{2})\b/);
+    return m ? m[1] : String(value).trim();
+  }
+
+  async function load(){
+    status("Chargement automatique de « musique.xlsx »…","wait");
+
+    try{
+      if(typeof XLSX==="undefined") throw new Error("Bibliothèque XLSX indisponible.");
+
+      const response=await fetch("musique.xlsx?ts="+Date.now(),{cache:"no-store"});
+      if(!response.ok) throw new Error("musique.xlsx introuvable ("+response.status+").");
+
+      const wb=XLSX.read(await response.arrayBuffer(),{type:"array",cellDates:true});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
+
+      if(!rows.length) throw new Error("Le fichier est vide.");
+
+      const headerInfo=findHeaderRow(rows);
+      const map=headerInfo.map;
+      const headerRow=headerInfo.index;
+
+      if(map.date<0 || map.titre<0 || map.auteur<0){
+        const detected=(rows[headerRow]||[]).map(v=>String(v??"").trim()).filter(Boolean).join(" | ");
+        throw new Error("Colonnes requises absentes. En-têtes détectés : " + (detected || "aucun"));
+      }
+
+      const fresh=[];
+      for(const row of rows.slice(headerRow+1)){
+        const date=toISO(row[map.date]);
+        const title=norm(row[map.titre]);
+        const author=norm(row[map.auteur]);
+        if(!date || !title) continue;
+
+        const year=map.year>=0 ? normalizeYear(row[map.year]) : "";
+
+        fresh.push({
+          date,
+          title,
+          titre:title,
+          author,
+          auteur:author,
+          year,
+          annee:year,
+          "année":year,
+          origin:map.origin>=0 ? norm(row[map.origin]) : "",
+          instruments:map.instr>=0 ? norm(row[map.instr]) : "",
+          youtube:map.yt>=0 ? norm(row[map.yt]) : ""
+        });
+      }
+
+      fresh.sort((a,b)=>a.date.localeCompare(b.date));
+
+      // Le nouveau musique.xlsx devient la source de vérité :
+      // on remplace entièrement les anciennes données locales.
+      DATA=fresh;
+      window.DATA=fresh;
+      window.MUSIC_DATA=fresh;
+      dataMap=indexByDate(fresh);
+
+      try{ localStorage.setItem("MUSIC_DATA_JSON",JSON.stringify(fresh)); }catch(e){}
+
+      if(typeof renderCalendar==="function") renderCalendar();
+
+      if((location.hash||"").startsWith("#/date=")){
+        const d=decodeURIComponent(location.hash.slice(7));
+        if(typeof renderDetail==="function") renderDetail(d);
+      }
+
+      status("✓ musique.xlsx chargé : "+fresh.length+" morceaux.","ok");
+    }catch(error){
+      console.error("Chargement de musique.xlsx :",error);
+      status("⚠ "+error.message,"error");
+    }
+  }
+
+  if(document.readyState==="loading"){
+    document.addEventListener("DOMContentLoaded",()=>setTimeout(load,250),{once:true});
+  }else{
+    setTimeout(load,250);
+  }
 })();
 </script>
 <!-- === /AUTOLOAD PATCH v6 === -->
@@ -2938,14 +2821,8 @@ document.addEventListener("DOMContentLoaded", () => {
     border:0!important;
   }
   #grid .day.enhanced-music-day::after{
-    content:"";
-    position:absolute;
-    inset:0;
-    z-index:1;
-    background:
-      linear-gradient(180deg, rgba(15,23,42,.05) 0%, rgba(15,23,42,.28) 42%, rgba(15,23,42,.86) 100%),
-      linear-gradient(90deg, rgba(37,99,235,.28), rgba(219,39,119,.18));
-    pointer-events:none;
+    content:none!important;
+    background:none!important;
   }
   #grid .calendar-artist-photo{
     opacity:1!important;
@@ -2977,15 +2854,17 @@ document.addEventListener("DOMContentLoaded", () => {
     text-shadow:none!important;
     box-shadow:0 8px 20px rgba(15,23,42,.2);
   }
+  /* Texte directement posé sur la photo : aucun bandeau ni fond opaque */
   #grid .calendar-copy{
     position:relative;
     z-index:3;
     width:100%;
-    padding:.55rem .6rem .6rem;
-    border-radius:13px;
-    background:rgba(15,23,42,.72);
-    border:1px solid rgba(255,255,255,.24);
-    backdrop-filter:blur(8px);
+    padding:.35rem .15rem .25rem;
+    border-radius:0;
+    background:transparent!important;
+    border:0!important;
+    backdrop-filter:none!important;
+    box-shadow:none!important;
   }
   #grid .calendar-title{
     display:-webkit-box;
@@ -2996,18 +2875,23 @@ document.addEventListener("DOMContentLoaded", () => {
     font-weight:900;
     font-size:.95rem;
     line-height:1.08;
-    text-shadow:0 2px 10px rgba(0,0,0,.42);
+    text-shadow:
+      0 2px 3px rgba(0,0,0,.95),
+      0 0 10px rgba(0,0,0,.72);
   }
   #grid .calendar-author{
     display:block;
     margin-top:.22rem;
-    color:#bfdbfe!important;
+    color:#fff!important;
     font-weight:800;
     font-size:.78rem;
     line-height:1.15;
     white-space:nowrap;
     overflow:hidden;
     text-overflow:ellipsis;
+    text-shadow:
+      0 2px 3px rgba(0,0,0,.95),
+      0 0 9px rgba(0,0,0,.72);
   }
   #grid .calendar-open-badge{
     position:absolute;
@@ -3050,7 +2934,7 @@ document.addEventListener("DOMContentLoaded", () => {
     #grid .day.empty-calendar-cell{ min-height:58px; }
     #grid .calendar-day-number{ min-width:1.65rem; height:1.65rem; font-size:.78rem; top:.38rem; left:.38rem; }
     #grid .calendar-open-badge{ display:none; }
-    #grid .calendar-copy{ padding:.42rem; border-radius:10px; }
+    #grid .calendar-copy{ padding:.35rem .1rem .2rem; border-radius:0; background:transparent!important; border:0!important; backdrop-filter:none!important; }
     #grid .calendar-title{ font-size:.76rem; -webkit-line-clamp:2; }
     #grid .calendar-author{ font-size:.66rem; }
   }
@@ -3133,7 +3017,7 @@ document.addEventListener("DOMContentLoaded", () => {
       cell.classList.add("enhanced-music-day");
       if(cell.dataset.finalCalendarUi === "1") return;
       const day = String(Number(date.slice(8,10)));
-      const title = item.title || item.titre || "Morceau";
+      const title = typeof displayTitle==="function" ? displayTitle(item) : (item.title || item.titre || "Morceau");
       const author = item.author || item.auteur || "Artiste";
       cell.innerHTML =
         '<span class="calendar-day-number">' + escapeHtml(day) + '</span>' +
@@ -3305,7 +3189,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const item=itemForDate(d) || {};
     const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v||'—';};
     set('dateLbl',d);
-    set('titre',item.title||item.titre);
+    set('titre',typeof displayTitle==="function" ? displayTitle(item) : (item.title||item.titre));
     setAuthorWiki(item.author||item.auteur);
     set('origine',item.origin||item['origine (pays auteur)']);
     // Mise à jour immédiate du drapeau après avoir écrit le pays.
@@ -3539,6 +3423,183 @@ document.addEventListener("DOMContentLoaded", () => {
   },true);
 })();
 </script>
+
+
+
+
+\n\n
+
+<!-- === VERROUILLAGE FINAL DES DATES FUTURES — passé accessible === -->
+<style id="futureLockFinal">
+  #grid .day.future-locked{
+    cursor:not-allowed!important;
+    opacity:.72!important;
+  }
+  #grid .day.future-locked .calendar-title,
+  #grid .day.future-locked .calendar-author{
+    color:#64748b!important;
+  }
+  #grid .day.future-locked .calendar-open-badge{display:none!important}
+  #grid .day.future-locked img.calendar-artist-photo,
+  #grid .day.future-locked .calendar-photo-shade,
+  #grid .day.future-locked .calendar-photo-placeholder{
+    display:none!important;
+  }
+</style>
+<script>
+(function(){
+  'use strict';
+
+  function parisToday(){
+    try{
+      return new Date().toLocaleString('sv-SE',{timeZone:'Europe/Paris',hour12:false}).slice(0,10);
+    }catch(e){
+      const d=new Date();
+      return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    }
+  }
+
+  function isFuture(d){
+    return String(d||'').slice(0,10) > parisToday();
+  }
+
+  function dataArray(){
+    if(Array.isArray(window.DATA) && window.DATA.length) return window.DATA;
+    if(Array.isArray(window.MUSIC_DATA) && window.MUSIC_DATA.length) return window.MUSIC_DATA;
+    try{
+      const a=JSON.parse(localStorage.getItem('MUSIC_DATA_JSON')||'[]');
+      return Array.isArray(a)?a:[];
+    }catch(e){ return []; }
+  }
+
+  function itemForDate(d){
+    const key=String(d||'').slice(0,10);
+    return dataArray().find(x=>String(x?.date||'').slice(0,10)===key) || null;
+  }
+
+  function lockFutureCell(cell){
+    if(!cell) return;
+    const d=String(cell.dataset.date||'').slice(0,10);
+    if(!d || !itemForDate(d)) return;
+
+    if(isFuture(d)){
+      cell.classList.add('future-locked');
+      cell.setAttribute('aria-disabled','true');
+      cell.setAttribute('title','Ce morceau sera disponible le '+d+'.');
+      cell.style.cursor='not-allowed';
+
+      // On masque les informations du morceau, mais on conserve le numéro du jour.
+      const num=cell.querySelector('.calendar-day-number');
+      const copy=cell.querySelector('.calendar-copy');
+      if(copy){
+        copy.innerHTML='<span class="calendar-title">🔒 À découvrir</span>'+
+                       '<span class="calendar-author">Disponible le '+d+'</span>';
+      }else{
+        const html='<span class="calendar-day-number">'+(Number(d.slice(8,10)))+'</span>'+
+          '<div class="calendar-copy"><span class="calendar-title">🔒 À découvrir</span>'+
+          '<span class="calendar-author">Disponible le '+d+'</span></div>';
+        cell.innerHTML=html;
+      }
+      cell.querySelectorAll('img.calendar-artist-photo,.calendar-photo-shade,.calendar-photo-placeholder')
+          .forEach(el=>el.remove());
+      cell.classList.remove('has-artist-photo');
+    }else{
+      // IMPORTANT : les dates passées et la date du jour restent totalement accessibles.
+      cell.classList.remove('future-locked');
+      cell.removeAttribute('aria-disabled');
+      cell.removeAttribute('title');
+      cell.style.cursor='';
+      cell.style.opacity='';
+    }
+  }
+
+  function enforce(){
+    document.querySelectorAll('#grid .day[data-date]').forEach(lockFutureCell);
+  }
+
+  // Le clic est intercepté au niveau WINDOW, donc avant les anciens gestionnaires
+  // enregistrés sur document. Les dates passées passent normalement.
+  window.addEventListener('click',function(ev){
+    const cell=ev.target && ev.target.closest ? ev.target.closest('#grid .day[data-date]') : null;
+    if(!cell) return;
+    const d=String(cell.dataset.date||'').slice(0,10);
+    if(isFuture(d)){
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+    }
+  },true);
+
+  // Empêche aussi l'accès direct par #/date=YYYY-MM-DD pour une date future.
+  function guardHash(){
+    const m=(location.hash||'').match(/^#\/date=(.+)$/);
+    if(!m) return;
+    let d='';
+    try{ d=decodeURIComponent(m[1]).slice(0,10); }catch(e){}
+    if(isFuture(d)){
+      history.replaceState(null,'','#/');
+      const cal=document.getElementById('viewCalendar');
+      const det=document.getElementById('viewDetail');
+      if(det){det.classList.add('hidden');det.classList.remove('show');det.style.display='none';}
+      if(cal){cal.classList.remove('hidden');cal.classList.add('show');cal.style.display='';}
+      if(typeof window.renderCalendar==='function') setTimeout(enforce,0);
+    }
+  }
+
+  window.addEventListener('hashchange',guardHash,true);
+
+  // Si un ancien routeur a ouvert une fiche future avant ce patch, on la referme.
+  function guardCurrentView(){
+    guardHash();
+    enforce();
+  }
+
+  // Après chaque rendu, on verrouille uniquement les dates futures.
+  const previousRenderCalendar=window.renderCalendar;
+  window.renderCalendar=function(){
+    if(typeof previousRenderCalendar==='function'){
+      previousRenderCalendar.apply(this,arguments);
+    }
+    setTimeout(enforce,0);
+    setTimeout(enforce,80);
+  };
+
+  // Quand les données Excel viennent d'être chargées, si le mois courant
+  // ne contient aucun morceau, afficher le mois musical le plus récent,
+  // pas le premier mois de l'année. Les mois passés restent navigables.
+  function moveToLatestUsefulMonth(){
+    const arr=dataArray();
+    if(!arr.length) return false;
+    const count=document.getElementById('countMonth');
+    const prev=document.getElementById('prev');
+    if(!count || !prev) return false;
+    // renderCalendar écrit le nombre de morceaux du mois dans #countMonth.
+    // Si le mois courant est vide, on remonte jusqu'au dernier mois contenant
+    // réellement un morceau passé ou présent.
+    let n=0;
+    while(String(count.textContent||'').trim()==='0' && n<120){
+      prev.click();
+      n++;
+    }
+    return n>0;
+  }
+
+  document.addEventListener('DOMContentLoaded',function(){
+    setTimeout(function(){
+      // DATA peut être chargé automatiquement un peu après DOMContentLoaded.
+      if(moveToLatestUsefulMonth() && typeof window.renderCalendar==='function'){
+        window.renderCalendar();
+      }
+      guardCurrentView();
+      setTimeout(guardCurrentView,250);
+    },350);
+  });
+
+  // Après le chargement automatique de musique.xlsx, renderCalendar est appelé :
+  // notre wrapper ci-dessus réapplique alors le verrouillage.
+})();
+</script>
+<!-- === /VERROUILLAGE FINAL DES DATES FUTURES === -->
 
 </body>
 </html>
